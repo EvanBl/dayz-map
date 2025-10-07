@@ -6,65 +6,36 @@
   <title>DayZ World Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
-    html,body,#map{height:100%;margin:0}
-    .leaflet-container{background:#0b0f14}
-    #status{position:fixed;top:10px;left:10px;z-index:9999;background:#c62828;color:#fff;padding:8px 12px;border-radius:8px;font:14px system-ui, sans-serif;display:none}
-    #ok{background:#2e7d32}
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .leaflet-container { background: #0b0f14; }
+    #status { position: fixed; top: 10px; left: 10px; z-index: 9999; padding: 6px 10px; border-radius: 8px; font: 14px system-ui, sans-serif; color: #fff; background: #2e7d32; }
   </style>
 </head>
 <body>
-  <div id="status"></div>
+  <div id="status">Loading tiles from /flat/-1.-1/...</div>
   <div id="map"></div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    const WORLD = "world";     // your screenshot shows tiles/world/...
-    const VIEW  = "flat";      // using the flat view
-    const TILE  = 128;
+    const TILE_SIZE = 128;
 
-    // Pick a tile you KNOW exists from GitHub file list (you showed “-10_-1.png”)
-    const knownX = -10;
-    const knownY = -1;
+    // Your real folder path:
+    const WORLD = "world";
+    const VIEW = "flat";
+    const ZOOM_FOLDER = "-1.-1"; // ← your subfolder name
+    const EXT = "jpg";           // ← file extension
+    const BASE = "https://EvanBl.github.io/dayz-map/"; // absolute base URL for GitHub Pages
 
-    const status = document.getElementById('status');
-    function msg(text, ok=false){ status.textContent=text; status.id = ok ? 'ok' : ''; status.style.display='block'; }
+    const startX = -10;
+    const startY = -1;
 
-    async function probe(url){
-      return new Promise(res=>{
-        const i = new Image();
-        i.onload = ()=>res(true);
-        i.onerror= ()=>res(false);
-        i.src = url + '?t=' + Date.now(); // bust cache
-      });
-    }
+    const template = `${BASE}tiles/${WORLD}/${VIEW}/${ZOOM_FOLDER}/{x}_{y}.${EXT}`;
+    console.log("Using tile URL template:", template);
 
-    (async () => {
-      // Try WITHOUT z folder first: tiles/world/flat/X_Y.png
-      const noZ = `tiles/${WORLD}/${VIEW}/${knownX}_${knownY}.png`;
-      const withZ = `tiles/${WORLD}/${VIEW}/0/${knownX}_${knownY}.png`;
+    const map = L.map('map', { crs: L.CRS.Simple, zoomControl: true, minZoom: 0, maxZoom: 0 });
+    L.tileLayer(template, { tileSize: TILE_SIZE, noWrap: true }).addTo(map);
 
-      let template = null;
-      if (await probe(noZ)) {
-        template = `tiles/${WORLD}/${VIEW}/{x}_{y}.png`;
-        msg(`OK: using no-zoom pattern → ${noZ}`, true);
-      } else if (await probe(withZ)) {
-        template = `tiles/${WORLD}/${VIEW}/{z}/{x}_{y}.png`;
-        msg(`OK: using zoom pattern → ${withZ}`, true);
-      } else {
-        msg(`No tiles found at:
-- ${location.pathname.replace(/[^/]+$/,'')}${noZ}
-- ${location.pathname.replace(/[^/]+$/,'')}${withZ}
-Add a .nojekyll file and verify a tile URL in the browser.`, false);
-        return;
-      }
-
-      const map = L.map('map', { crs: L.CRS.Simple, zoomControl: true });
-      L.tileLayer(template, { tileSize: TILE, noWrap: true, minZoom: 0, maxZoom: template.includes('{z}') ? 5 : 0 })
-        .addTo(map);
-
-      // center on the known tile
-      map.setView([knownY * TILE, knownX * TILE], 0);
-      console.log('Using template:', template);
-    })();
+    map.setView([startY * TILE_SIZE, startX * TILE_SIZE], 0);
   </script>
 </body>
 </html>
