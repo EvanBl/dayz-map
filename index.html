@@ -4,11 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DayZ World Map</title>
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        crossorigin="" />
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; }
     .leaflet-container { background: #0b0f14; }
@@ -19,20 +17,34 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    const WORLD = "world";      // change if your world folder has a different name
-    const VIEW = "topdown";     // or "flat", "surface"
-    const MIN_Z = 0;
-    const MAX_Z = 7;            // adjust to match your tiles' highest zoom folder
+    // ---- CONFIG: match your repo structure ----
+    const WORLD = "world";
+    const VIEW  = "flat";      // from your screenshot
+    const TILE_SIZE = 128;     // Dynmap default 128px
 
-    const map = L.map('map', { crs: L.CRS.Simple });
-    L.tileLayer(`tiles/${WORLD}/${VIEW}/{z}/{x}_{y}.png`, {
-      minZoom: MIN_Z,
-      maxZoom: MAX_Z,
-      tileSize: 128,
+    // Your tiles are at: tiles/world/flat/<x>_<y>.png  (no {z} folder)
+    const tiles = L.tileLayer(`tiles/${WORLD}/${VIEW}/{x}_{y}.png`, {
+      tileSize: TILE_SIZE,
       noWrap: true,
-    }).addTo(map);
+      // Tell Leaflet “there’s really only one zoom”, but allow browser zooming
+      minZoom: 0,
+      maxZoom: 0
+    });
 
-    map.setView([0, 0], Math.floor((MIN_Z + MAX_Z) / 2));
+    // Simple pixel CRS
+    const map = L.map('map', {
+      crs: L.CRS.Simple,
+      zoomControl: true,
+      worldCopyJump: false
+    });
+
+    tiles.addTo(map);
+
+    // Center on a tile that actually exists (pick one from tiles/world/flat/)
+    // From your tree I see folders like "-1_-1", "-2_-1", etc. Use any one:
+    const startX = -1;     // folder name before underscore
+    const startY = -1;     // folder name after underscore
+    map.setView([startY * TILE_SIZE, startX * TILE_SIZE], 0);
   </script>
 </body>
 </html>
