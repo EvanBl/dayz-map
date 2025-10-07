@@ -15,56 +15,49 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // -------- CONFIG: adjust if needed --------
+    // ---------- CONFIG (adjust to your extremes if needed) ----------
     const BASE  = "https://EvanBl.github.io/dayz-map/"; // trailing slash
     const WORLD = "world";
     const VIEW  = "flat";
     const EXT   = "jpg";
     const TILE  = 128;
 
-    // Set these to your min/max tile filenames you see in GitHub:
-    // From your screenshots I can see down to about x=-18, y=-33 and up to ~x=6, y=4.
-    // If you spot smaller/larger, update these four numbers.
-    const MIN_X = -18;
-    const MAX_X = 6;
-    const MIN_Y = -33;
-    const MAX_Y = 4;
+    // Bounds seen in your repo (update if you find further edges)
+    const MIN_X = -18;   // smallest x filename you have
+    const MAX_X =  18;   // largest x filename you have
+    const MIN_Y = -72;   // smallest y (most negative) you have
+    const MAX_Y =   10;  // largest y you have
 
-    // A real tile to start on (must exist as <x>_<y>.jpg under its ten-group folder):
+    // A real tile to center on (make sure it exists)
     const START_X = -10;
     const START_Y = -33;
 
-    // ---- helpers ----
-    // group folder is trunc(x/10) and trunc(y/10); trunc toward zero matches your folders (-33 -> -3, 17 -> 1)
-    function group10(n) { return n < 0 ? Math.ceil(n / 10) : Math.floor(n / 10); }
+    // ---------- Helpers ----------
+    // Bucket size in tiles (your folders are -1_-2, -1_-3, etc. every 32 tiles)
+    const BUCKET = 32;
 
-    // Convert Leaflet's non-negative coords (0..W-1, 0..H-1) into your file coords (may be negative)
-    function fileX(lx) { return MIN_X + lx; }
-    function fileY(ly) { return MIN_Y + ly; }
+    // Convert Leaflet coords (0..W-1) to real file coords (can be negative)
+    const fileX = (lx) => MIN_X + lx;
+    const fileY = (ly) => MIN_Y + ly;
 
-    // Custom layer that adds the group folder "<gx>_<gy>/" and the real "<fx>_<fy>.jpg"
+    // Compute group folder using FLOOR (toward -infinity), NOT toward zero
+    const group = (n) => Math.floor(n / BUCKET);
+
+    // Custom tile layer that inserts the <gx>_<gy>/ prefix and <fx>_<fy>.jpg filename
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
         const fx = fileX(coords.x);
         const fy = fileY(coords.y);
-        const gx = group10(fx);
-        const gy = group10(fy);
+        const gx = group(fx);
+        const gy = group(fy);
         return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}`;
       }
     });
 
-    // Pixel bounds to keep panning within your map rectangle
+    // ---------- Build map ----------
     const widthTiles  = (MAX_X - MIN_X + 1);
     const heightTiles = (MAX_Y - MIN_Y + 1);
-    const southWest = L.point(0, 0);
-    const northEast = L.point(widthTiles * TILE, heightTiles * TILE);
-    const pixelBounds = L.bounds(southWest, northEast);
-    const latLngBounds = L.latLngBounds(
-      L.point(pixelBounds.min.x, pixelBounds.min.y),
-      L.point(pixelBounds.max.x, pixelBounds.max.y)
-    );
 
-    // Build the map
     const map = L.map('map', {
       crs: L.CRS.Simple,
       minZoom: 0,
@@ -72,17 +65,14 @@
       zoomControl: true
     });
 
-    // Add the custom tile layer
     new DynmapLayer('', { tileSize: TILE, noWrap: true }).addTo(map);
 
-    // Converting a real file tile (START_X, START_Y) to Leaflet tile coords:
+    // Center on a real tile
     const startLeafletX = START_X - MIN_X; // shift into 0..W-1
     const startLeafletY = START_Y - MIN_Y;
-
-    // Center on that tile (convert tile coords to pixel coords)
     map.setView([startLeafletY * TILE, startLeafletX * TILE], 0);
 
-    // Constrain panning to your map bounds
+    // Keep panning inside map bounds
     map.setMaxBounds([
       [0, 0],
       [heightTiles * TILE, widthTiles * TILE]
