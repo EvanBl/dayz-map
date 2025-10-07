@@ -4,46 +4,54 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DayZ World Map</title>
+  <meta http-equiv="Cache-Control" content="no-store" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; }
     .leaflet-container { background: #0b0f14; }
+    #badge{position:fixed;top:10px;left:10px;z-index:9999;padding:6px 10px;border-radius:8px;
+           font:14px system-ui, sans-serif;color:#fff;background:#2e7d32}
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="badge">v9 • bucket=32 • floor</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---------- CONFIG (adjust to your extremes if needed) ----------
-    const BASE  = "https://EvanBl.github.io/dayz-map/"; // trailing slash
+    // ---------------- CONFIG (edit these if your world grows) ----------------
+    // Bucket range visible in your repo (left sidebar screenshot):
+    // tiles/world/flat/<gx>_<gy>/...
+    const GX_MIN = -1, GX_MAX =  2;   // folder range for X buckets
+    const GY_MIN = -7, GY_MAX =  7;   // folder range for Y buckets
+
+    // Choose a real tile to start on (must exist in your repo):
+    // You had -10_-33.jpg inside folder -1_-2 (so these are safe)
+    const START_X = -10;
+    const START_Y = -33;
+
+    // ---------------- CONSTANTS ----------------
+    const BASE  = "https://EvanBl.github.io/dayz-map/"; // Pages base
     const WORLD = "world";
     const VIEW  = "flat";
     const EXT   = "jpg";
     const TILE  = 128;
+    const BUCKET = 32; // Dynmap’s folder step
 
-    // Bounds seen in your repo (update if you find further edges)
-    const MIN_X = -18;   // smallest x filename you have
-    const MAX_X =  18;   // largest x filename you have
-    const MIN_Y = -72;   // smallest y (most negative) you have
-    const MAX_Y =   10;  // largest y you have
+    // Derive full tile bounds from bucket range
+    const MIN_X = GX_MIN * BUCKET;
+    const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
+    const MIN_Y = GY_MIN * BUCKET;
+    const MAX_Y = GY_MAX * BUCKET + (BUCKET - 1);
 
-    // A real tile to center on (make sure it exists)
-    const START_X = -10;
-    const START_Y = -33;
-
-    // ---------- Helpers ----------
-    // Bucket size in tiles (your folders are -1_-2, -1_-3, etc. every 32 tiles)
-    const BUCKET = 32;
-
-    // Convert Leaflet coords (0..W-1) to real file coords (can be negative)
+    // Map Leaflet's 0..W-1 to real file coords
     const fileX = (lx) => MIN_X + lx;
     const fileY = (ly) => MIN_Y + ly;
 
-    // Compute group folder using FLOOR (toward -infinity), NOT toward zero
+    // Folder bucket using FLOOR (toward -∞) — this matches your folders
     const group = (n) => Math.floor(n / BUCKET);
 
-    // Custom tile layer that inserts the <gx>_<gy>/ prefix and <fx>_<fy>.jpg filename
+    // Custom tile layer: adds "<gx>_<gy>/" between and uses "<fx>_<fy>.jpg"
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
         const fx = fileX(coords.x);
@@ -54,7 +62,7 @@
       }
     });
 
-    // ---------- Build map ----------
+    // Build map
     const widthTiles  = (MAX_X - MIN_X + 1);
     const heightTiles = (MAX_Y - MIN_Y + 1);
 
@@ -67,16 +75,17 @@
 
     new DynmapLayer('', { tileSize: TILE, noWrap: true }).addTo(map);
 
-    // Center on a real tile
-    const startLeafletX = START_X - MIN_X; // shift into 0..W-1
+    // Center on a known-good tile
+    const startLeafletX = START_X - MIN_X;
     const startLeafletY = START_Y - MIN_Y;
     map.setView([startLeafletY * TILE, startLeafletX * TILE], 0);
 
-    // Keep panning inside map bounds
-    map.setMaxBounds([
-      [0, 0],
-      [heightTiles * TILE, widthTiles * TILE]
-    ]);
+    // Keep panning inside bounds
+    map.setMaxBounds([[0,0], [heightTiles * TILE, widthTiles * TILE]]);
+
+    // Debug to console
+    console.log("Map bounds (tiles):", {MIN_X, MAX_X, MIN_Y, MAX_Y});
+    console.log("Start tile:", {START_X, START_Y});
   </script>
 </body>
 </html>
