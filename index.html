@@ -3,55 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map</title>
+  <title>DayZ World Map v13</title>
 
-  <!-- Strong cache disable to force browsers to fetch new JS -->
+  <!-- kill caching -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; }
     .leaflet-container { background: #0b0f14; }
-    #badge {
-      position: fixed;
-      top: 10px;
-      left: 10px;
-      z-index: 9999;
-      padding: 6px 10px;
-      border-radius: 8px;
-      font: 14px system-ui, sans-serif;
-      color: #fff;
-      background: #2e7d32;
+    #badge{
+      position:fixed;top:10px;left:10px;z-index:9999;
+      padding:6px 10px;border-radius:8px;
+      font:14px system-ui, sans-serif;color:#fff;background:#2e7d32
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v12 • bucket=32 • floor</div>
+  <div id="badge">v13 • bucket=32 • FLOOR</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---------------- CONFIG ----------------
-    const GX_MIN = -3, GX_MAX =  2;   // folders you showed
+    // ---------- CONFIG: match your repo ----------
+    const GX_MIN = -3, GX_MAX =  2;   // existing folders
     const GY_MIN = -6, GY_MAX =  6;
 
-    const START_X = -10;  // valid tile coords
+    const START_X = -10;              // real, existing tile
     const START_Y = -33;
 
-    // ---------------- CONSTANTS ----------------
-    const BASE   = "https://EvanBl.github.io/dayz-map/"; // your repo
+    // ---------- CONSTANTS ----------
+    const BASE   = "https://EvanBl.github.io/dayz-map/";
     const WORLD  = "world";
     const VIEW   = "flat";
     const EXT    = "jpg";
     const TILE   = 128;
     const BUCKET = 32;
-    const VERSION = "v12"; // forces browser to re-fetch tiles
+    const VERSION = "v13";            // cache-bust query
 
     const MIN_X = GX_MIN * BUCKET;
     const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
@@ -61,58 +51,76 @@
     const widthTiles  = MAX_X - MIN_X + 1;
     const heightTiles = MAX_Y - MIN_Y + 1;
 
+    // Map Leaflet tile index -> file coords
     const fileX = (lx) => MIN_X + lx;
     const fileY = (ly) => MIN_Y + ly;
 
-    // ---- FLOOR bucket math (matches your folders) ----
-    const group = (n) => Math.floor(n / BUCKET);
+    // --------- SAFE FLOOR DIVISION ----------
+    // floor(n/d) that behaves correctly for negatives in every browser.
+    function floorDiv(n, d) {
+      if (n >= 0) return Math.floor(n / d);
+      const q = Math.trunc(n / d);        // trunc toward 0
+      return (q * d === n) ? q : q - 1;   // step one more negative if there was a remainder
+    }
+    const group = (n) => floorDiv(n, BUCKET);
 
-    // ---- Custom tile loader ----
+    // --------- Tile Layer ----------
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
         const fx = fileX(coords.x);
         const fy = fileY(coords.y);
         const gx = group(fx);
         const gy = group(fy);
-        return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
-      },
+
+        const url = `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
+        // debug: see exactly what we’re asking for
+        // console.log("tile", {coords, fx, fy, gx, gy, url});
+        return url;
+      }
     });
 
-    // ---- Initialize Leaflet ----
-    const map = L.map("map", {
+    // --------- Map init ----------
+    const map = L.map('map', {
       crs: L.CRS.Simple,
-      minZoom: -5,  // allows zooming way out
-      maxZoom:  2,  // slight zoom in
+      minZoom: -5,
+      maxZoom:  2,
       zoomSnap: 1,
       wheelPxPerZoomLevel: 80,
       zoomControl: true,
     });
 
-    new DynmapLayer("", {
+    const layer = new DynmapLayer('', {
       tileSize: TILE,
       noWrap: true,
-      maxNativeZoom: 0,
+      maxNativeZoom: 0
     }).addTo(map);
 
-    // ---- Center on known tile ----
+    // Invert Y for CRS.Simple
     const startLeafletX = START_X - MIN_X;
     const startLeafletY = START_Y - MIN_Y;
     const startLat = -(startLeafletY * TILE);
     const startLng =  (startLeafletX * TILE);
     map.setView([startLat, startLng], -1);
 
-    // ---- Bounds ----
+    // Bounds (top negative, bottom 0)
     const bounds = [[-(heightTiles * TILE), 0], [0, widthTiles * TILE]];
     map.setMaxBounds(bounds);
     map.options.maxBoundsViscosity = 1.0;
 
-    // ---- Transparent fallback for 404s ----
+    // Transparent 1x1 for 404 holes
     L.TileLayer.prototype.options.errorTileUrl =
-      "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+      'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    console.log("Start URL test:", 
-      `${BASE}tiles/${WORLD}/${VIEW}/${Math.floor(START_X/BUCKET)}_${Math.floor(START_Y/BUCKET)}/${START_X}_${START_Y}.${EXT}?${VERSION}`
+    // Show the exact expected start URL
+    console.log(
+      "Start URL should exist:",
+      `${BASE}tiles/${WORLD}/${VIEW}/${group(START_X)}_${group(START_Y)}/${START_X}_${START_Y}.${EXT}?${VERSION}`
     );
+
+    // Helpful runtime logs when a tile fails
+    layer.on('tileerror', function (e) {
+      console.warn('404 tile:', e.tile.src);
+    });
   </script>
 </body>
 </html>
