@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DayZ World Map</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .leaflet-container { background: #0b0f14; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const WORLD = "world";      // change if your world folder has a different name
+    const VIEW = "topdown";     // or "flat", "surface"
+    const MIN_Z = 0;
+    const MAX_Z = 7;            // adjust to match your tiles' highest zoom folder
+
+    const map = L.map('map', { crs: L.CRS.Simple });
+    L.tileLayer(`tiles/${WORLD}/${VIEW}/{z}/{x}_{y}.png`, {
+      minZoom: MIN_Z,
+      maxZoom: MAX_Z,
+      tileSize: 128,
+      noWrap: true,
+    }).addTo(map);
+
+    map.setView([0, 0], Math.floor((MIN_Z + MAX_Z) / 2));
+  </script>
+</body>
+</html>
