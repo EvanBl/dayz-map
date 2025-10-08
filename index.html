@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map</title>
+  <title>DayZ World Map — ISO (south+ Z)</title>
 
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
@@ -16,7 +16,7 @@
     #badge, #status, #hud {
       position:fixed; left:10px; z-index:9999;
       padding:6px 10px; border-radius:8px; color:#fff; font:14px system-ui, sans-serif;
-      pointer-events:none; /* let mouse events pass through */
+      pointer-events:none; /* let mouse events reach the map */
     }
     #badge  { top:10px; background:#2e7d32; }
     #status { top:44px; background:#1565c0; max-width:80vw; word-break:break-all; white-space:pre-wrap; }
@@ -26,29 +26,31 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13N+offset • FLAT tiles • X / Z(north+)</div>
+  <div id="badge">v14-ISO • view=ct • Z(south+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
     // ---------- CONFIG: set these to your actual folders/tiles ----------
-    const GX_MIN = -3, GX_MAX =  2;   // bucket folders along X (e.g., -3_-6 .. 2_6)
-    const GY_MIN = -6, GY_MAX =  6;   // bucket folders along Y
-    // A tile that exists (for probing)
+    // bucket folders you actually have under tiles/world/ct/<gx>_<gy>/
+    const GX_MIN = -3, GX_MAX =  2;
+    const GY_MIN = -6, GY_MAX =  6;
+
+    // A known-good file (must exist) to probe the base path:
     const START_X = -10, START_Y = -33;
 
     // ---------- CONSTANTS ----------
     const WORLD  = "world";
-    const VIEW   = "flat";    // FLAT = exact pixel→block mapping
+    const VIEW   = "ct";       // ISO tiles live in tiles/world/ct/
     const EXT    = "jpg";
-    const BUCKET = 32;        // one tile = 32×32 blocks
-    const VERSION = "v13N_off";
-    const INVERT_Z = true;    // show Z as north-positive like your HUD
+    const BUCKET = 32;         // one tile = 32×32 blocks
+    const VERSION = "v14_iso_southpos";
 
-    // Offsets (calibrate against F3 at a known point)
+    // Orientation & offsets
+    const SOUTH_POSITIVE_Z = true; // Z increases to the south; going up makes Z go down
     const X_OFFSET = 0;
-    const Z_OFFSET = 875;     // <- your reported constant offset
+    const Z_OFFSET = 0;            // removed offset per your request
 
     // Derived bounds in file-tile coords
     const MIN_X = GX_MIN * BUCKET;
@@ -65,7 +67,7 @@
     const group = (n) => floorDiv(n, BUCKET);
     const withSlash = s => s.endsWith('/') ? s : s + '/';
 
-    // Try common bases (root, /docs) for GH Pages
+    // Try typical GH Pages bases (root, /docs)
     const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
     const parts = location.pathname.split('/').filter(Boolean);
     const repoRootBase = parts.length ? withSlash(`${location.origin}/${parts[0]}/`) : withSlash(location.origin + '/');
@@ -123,7 +125,7 @@
       const statusEl = document.getElementById('status');
       const hud = document.getElementById('hud');
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
-      status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
+      status(`BASE ok • ISO view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
 
       // --------- Tile layer with z0 normalization (prevents far-zoom blackout) ---------
       const DynmapLayer = L.TileLayer.extend({
@@ -152,8 +154,8 @@
         zoomControl: true
       });
 
-      // Allow far zoom-out (like YOM feel on flat)
-      const EXTRA_OUT = 3;                   // tighten if needed
+      // Deep zoom-out (like YOM)
+      const EXTRA_OUT = 6;
       map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
       const layer = new DynmapLayer('', {
@@ -164,7 +166,7 @@
         keepBuffer: 4
       }).addTo(map);
 
-      // Bounds & initial view (fit entire atlas)
+      // Bounds & initial view (fit whole atlas)
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
@@ -174,7 +176,7 @@
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // --------- Seam-free HUD: global z0 pixels → world X/Z (north-positive) ---------
+      // --------- Seam-free HUD: global z0 pixels → world X/Z (south-positive) ---------
       const PPB = TILE / BUCKET; // z0 pixels per block
 
       function updateHUD(latlng){
@@ -188,8 +190,9 @@
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
 
+        // South-positive Z (going up/north -> Z goes down)
         const Xf = Xf_south + X_OFFSET;
-        const Zf = (INVERT_Z ? -Zf_south : Zf_south) + Z_OFFSET;
+        const Zf = Zf_south + Z_OFFSET;
 
         // File tile (for URL/debug), matching renderer's Y flip
         const lx = Math.floor(px0 / TILE);
@@ -214,11 +217,13 @@
         const Zi = Math.floor(info.Zf);
         const url = `${withSlash(BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
         navigator.clipboard?.writeText(`${Xi} ${Zi}`);
-        status(`copied coords: ${Xi} ${Zi}\n${url}`, '#2e7d32');
-        setTimeout(()=>status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1400);
+        const msg = `copied coords: ${Xi} ${Zi}\n${url}`;
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = msg; statusEl.style.background = '#2e7d32';
+        setTimeout(()=>{ statusEl.textContent = `BASE ok • ISO view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`; statusEl.style.background = '#2e7d32'; }, 1400);
       });
 
-      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y, Z_OFFSET });
+      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
     })();
   </script>
 </body>
