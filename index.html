@@ -16,6 +16,7 @@
     #badge, #status, #hud {
       position:fixed; left:10px; z-index:9999;
       padding:6px 10px; border-radius:8px; color:#fff; font:14px system-ui, sans-serif;
+      pointer-events: none; /* let mouse events reach the map */
     }
     #badge  { top:10px; background:#2e7d32; }
     #status { top:44px; background:#1565c0; max-width:80vw; word-break:break-all; white-space:pre-wrap; }
@@ -25,26 +26,26 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13L • FLAT visual • ground X / Z(north+)</div>
+  <div id="badge">v13M • FLAT tiles • seam-free X / Z(north+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---------- CONFIG: set your actual bucket folder ranges ----------
+    // --------- CONFIG: set the bucket folder ranges you actually have ----------
     const GX_MIN = -3, GX_MAX =  2;   // X bucket folders present
     const GY_MIN = -6, GY_MAX =  6;   // Y bucket folders present
 
-    // A known-good tile from your repo (must exist)
+    // A known-good tile that exists in your repo (for probing)
     const START_X = -10, START_Y = -33;
 
-    // ---------- CONSTANTS ----------
+    // --------- CONSTANTS ----------
     const WORLD  = "world";
-    const VIEW   = "flat";     // force FLAT for exact per-pixel coords
+    const VIEW   = "flat";     // FLAT = exact pixel→block mapping
     const EXT    = "jpg";
-    const BUCKET = 32;         // dynmap HD tiles cover 32x32 blocks
-    const VERSION = "v13L";    // cache-buster
-    const INVERT_Z = true;     // default: Z increases northward (your preference)
+    const BUCKET = 32;         // dynmap HD tiles cover 32×32 blocks
+    const VERSION = "v13M";    // cache-buster
+    const INVERT_Z = true;     // show Z as north-positive
 
     // Derived limits (file/tile indices)
     const MIN_X = GX_MIN * BUCKET;
@@ -56,24 +57,16 @@
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // ---------- helpers ----------
+    // --------- helpers ----------
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group = (n) => floorDiv(n, BUCKET);
-    // Leaflet tile index -> file coords (Y FIX: files descend downward)
-    const fileX = (lx) => MIN_X + lx;
-    const fileY = (ly) => MAX_Y - ly;
-
     const withSlash = s => s.endsWith('/') ? s : s + '/';
+
+    // Try both root and /docs layouts (covers GH Pages setups)
     const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
     const parts = location.pathname.split('/').filter(Boolean);
     const repoRootBase = parts.length ? withSlash(`${location.origin}/${parts[0]}/`) : withSlash(location.origin + '/');
-
-    const baseCandidates = [
-      currentDirBase,
-      repoRootBase,
-      withSlash(currentDirBase + 'docs/'),
-      withSlash(repoRootBase + 'docs/')
-    ];
+    const baseCandidates = [ currentDirBase, repoRootBase, withSlash(currentDirBase+'docs/'), withSlash(repoRootBase+'docs/') ];
 
     const folderXY = `${group(START_X)}_${group(START_Y)}`;
     const makePath = () => `tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${EXT}`;
@@ -129,19 +122,18 @@
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
       status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
 
-      // ----- Tile layer with z0 normalization (prevents blackout on far zoom) -----
+      // --------- Tile layer with z0 normalization (prevents far-zoom blackout) ---------
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
-          // normalize current grid (coords.z) to native z0
-          const zTile = (coords && typeof coords.z === 'number') ? coords.z
-                        : (this._tileZoom ?? this._map.getZoom() ?? 0);
+          // normalize current grid (coords.z) to native z0 grid
+          const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
           const scale  = Math.pow(2, -zTile); // z0 => 1, z=-3 => 8
-
           const lx0 = Math.floor(coords.x * scale);
           const ly0 = Math.floor(coords.y * scale);
 
-          const fx = fileX(lx0);
-          const fy = fileY(ly0);
+          const fx = MIN_X + lx0;
+          const fy = MIN_Y + ly0; // Y increases downward in files (FLAT)
+
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
 
           const gx = group(fx), gy = group(fy);
@@ -157,8 +149,8 @@
         zoomControl: true
       });
 
-      // Let it zoom farther out (YOM-style)
-      const EXTRA_OUT = 3; // lower to 2 if you still see any blanking
+      // Allow far zoom-out (YOM-style)
+      const EXTRA_OUT = 3; // lower to 2 if you want tighter steps
       map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
       const layer = new DynmapLayer('', {
@@ -169,68 +161,61 @@
         keepBuffer: 4
       }).addTo(map);
 
-      // Bounds & initial view (show whole world)
+      // Bounds & initial view (fit entire atlas)
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
       map.fitBounds(L.latLngBounds(bounds).pad(0.12));
 
-      // Transparent tile for gaps; log genuine misses
+      // Transparent tile for gaps; log real misses
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // FLAT tiles: pixels-per-block at z0
-      const PPB = TILE / 32; // 128px tile -> 4 px per block
-      
+      // --------- Seam-free HUD: global z0 pixels → world X/Z (north-positive) ---------
+      const PPB = TILE / BUCKET; // z0 pixels per block
+
       function updateHUD(latlng){
-        // 1) project mouse to CURRENT zoom pixels
         const z  = map.getZoom();
-        const pz = map.project(latlng, z);         // pixels at current zoom
-      
-        // 2) normalize to z0 pixels (so filenames/TILE math line up)
-        const scale = Math.pow(2, -z);             // e.g. z=-3 => 8
+        const pz = map.project(latlng, z);      // pixels at current zoom
+        const scale = Math.pow(2, -z);          // normalize to z0 pixels
         const px0 = pz.x * scale;
         const py0 = pz.y * scale;
-      
-        // 3) world coords directly from global z0 pixels (no seams)
-        //    left/top of the whole atlas corresponds to MIN_X/MIN_Y
+
+        // continuous world coords from global pixels (no per-tile stitching)
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
-      
-        // your chosen orientation: Z positive = north
+
         const Xf = Xf_south;
-        const Zf = -Zf_south;
-      
-        // 4) still compute file tile for URL/debug (but DON'T use for coords)
+        const Zf = INVERT_Z ? -Zf_south : Zf_south;
+
+        // compute file tile for URL/debug (not used for coords)
         const lx = Math.floor(px0 / TILE);
         const ly = Math.floor(py0 / TILE);
         const fx = MIN_X + lx;
-        const fy = MAX_Y - ly; // file Y flips for URLs
-        const gx = Math.floor(fx / 32);
-        const gy = Math.floor(fy / 32);
-      
-        // 5) show smooth decimals; floor only when you actually need block ints
+        const fy = MIN_Y + ly;
+        const gx = group(fx), gy = group(fy);
+
         hud.innerHTML =
-          `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  ` +
-          `tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>  ` +
-          `| b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
-      
+          `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>` +
+          `  | b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
+
         return { Xf, Zf, fx, fy, gx, gy };
       }
-      
-      // optional: when copying on click, round to int blocks
+
+      map.on('mousemove', e => updateHUD(e.latlng));
+
+      // Click: copy integer block coords, also show the tile URL in status
       map.on('click', e => {
         const info = updateHUD(e.latlng);
         const Xi = Math.floor(info.Xf);
         const Zi = Math.floor(info.Zf);
         const url = `${withSlash(BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
         navigator.clipboard?.writeText(`${Xi} ${Zi}`);
-        status(`copied coords: ${Xi} ${Zi}`, '#2e7d32');
-        setTimeout(()=>status(`tile: ${url}`, '#2e7d32'), 1200);
+        status(`copied coords: ${Xi} ${Zi}\n${url}`, '#2e7d32');
+        setTimeout(()=>status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1400);
       });
 
-
-      console.log('Resolved', { BASE: BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
+      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
     })();
   </script>
 </body>
