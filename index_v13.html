@@ -35,7 +35,8 @@
     const START_Y = -33;
 
     // ---------- CONSTANTS ----------
-    const BASE   = "https://EvanBl.github.io/dayz-map/";
+    // Build base from where THIS file actually lives (works in / or /docs)
+    const BASE = `${location.origin}${location.pathname.replace(/[^/]*$/, '')}`;
     const WORLD  = "world";
     const VIEW   = "flat";
     const EXT    = "jpg";
@@ -55,14 +56,13 @@
     const fileX = (lx) => MIN_X + lx;
     const fileY = (ly) => MIN_Y + ly;
 
-    // --------- SAFE FLOOR DIVISION ----------
-    // floor(n/d) that behaves correctly for negatives in every browser.
+    // --------- SAFE FLOOR DIVISION for negatives ----------
     function floorDiv(n, d) {
       if (n >= 0) return Math.floor(n / d);
-      const q = Math.trunc(n / d);        // trunc toward 0
-      return (q * d === n) ? q : q - 1;   // step one more negative if there was a remainder
+      const q = Math.trunc(n / d);        // toward 0
+      return (q * d === n) ? q : q - 1;   // step more negative if remainder
     }
-    const group = (n) => floorDiv(n, BUCKET);
+    const group = (n) => floorDiv(n, BUCKET);  // FLOOR bucketing
 
     // --------- Tile Layer ----------
     const DynmapLayer = L.TileLayer.extend({
@@ -71,10 +71,7 @@
         const fy = fileY(coords.y);
         const gx = group(fx);
         const gy = group(fy);
-
         const url = `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
-        // debug: see exactly what we’re asking for
-        // console.log("tile", {coords, fx, fy, gx, gy, url});
         return url;
       }
     });
@@ -111,16 +108,12 @@
     L.TileLayer.prototype.options.errorTileUrl =
       'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // Show the exact expected start URL
+    // Helpful logs
     console.log(
       "Start URL should exist:",
       `${BASE}tiles/${WORLD}/${VIEW}/${group(START_X)}_${group(START_Y)}/${START_X}_${START_Y}.${EXT}?${VERSION}`
     );
-
-    // Helpful runtime logs when a tile fails
-    layer.on('tileerror', function (e) {
-      console.warn('404 tile:', e.tile.src);
-    });
+    layer.on('tileerror', e => console.warn('404 tile:', e.tile.src));
   </script>
 </body>
 </html>
