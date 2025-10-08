@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map — ISO (south+ Z)</title>
+  <title>DayZ World Map — FLAT (south+ Z)</title>
 
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
@@ -16,41 +16,39 @@
     #badge, #status, #hud {
       position:fixed; left:10px; z-index:9999;
       padding:6px 10px; border-radius:8px; color:#fff; font:14px system-ui, sans-serif;
-      pointer-events:none; /* let mouse events reach the map */
+      pointer-events:none;
     }
     #badge  { top:10px; background:#2e7d32; }
-    #status { top:44px; background:#1565c0; max-width:80vw; word-break:break-all; white-space:pre-wrap; }
+    #status { top:44px; background:#1565c0; max-width:80vw; white-space:pre-wrap; word-break:break-all; }
     #hud    { bottom:10px; background:rgba(0,0,0,.6); font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     #hud b { color:#8bc34a; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v14-ISO • view=ct • Z(south+)</div>
+  <div id="badge">v14-FLAT • view=flat • Z(south+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---------- CONFIG: set these to your actual folders/tiles ----------
-    // bucket folders you actually have under tiles/world/ct/<gx>_<gy>/
-    const GX_MIN = -3, GX_MAX =  2;
-    const GY_MIN = -6, GY_MAX =  6;
+    // ---- CONFIG: set these to your actual folder coverage ----
+    const GX_MIN = -3, GX_MAX =  2;    // bucket folders along X
+    const GY_MIN = -6, GY_MAX =  6;    // bucket folders along Y
 
-    // A known-good file (must exist) to probe the base path:
+    // A tile that exists (for probing)
     const START_X = -10, START_Y = -33;
 
-    // ---------- CONSTANTS ----------
+    // ---- CONSTANTS ----
     const WORLD  = "world";
-    const VIEW   = "ct";       // ISO tiles live in tiles/world/ct/
-    const EXT    = "jpg";
-    const BUCKET = 32;         // one tile = 32×32 blocks
-    const VERSION = "v14_iso_southpos";
+    const VIEW   = "flat";   // <-- using flat tiles
+    const EXT    = "jpg";    // change to "png" if your flat tiles are png
+    const BUCKET = 32;       // one tile = 32×32 blocks
+    const VERSION = "v14_flat_southpos";
 
-    // Orientation & offsets
-    const SOUTH_POSITIVE_Z = true; // Z increases to the south; going up makes Z go down
-    const X_OFFSET = 0;
-    const Z_OFFSET = 0;            // removed offset per your request
+    // Z orientation + optional offsets (none needed)
+    const SOUTH_POSITIVE_Z = true; // going up/north -> Z goes down
+    const X_OFFSET = 0, Z_OFFSET = 0;
 
     // Derived bounds in file-tile coords
     const MIN_X = GX_MIN * BUCKET;
@@ -62,12 +60,12 @@
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // ---------- helpers ----------
+    // ---- helpers ----
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group = (n) => floorDiv(n, BUCKET);
     const withSlash = s => s.endsWith('/') ? s : s + '/';
 
-    // Try typical GH Pages bases (root, /docs)
+    // Try common GH Pages bases (root, /docs)
     const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
     const parts = location.pathname.split('/').filter(Boolean);
     const repoRootBase = parts.length ? withSlash(`${location.origin}/${parts[0]}/`) : withSlash(location.origin + '/');
@@ -94,10 +92,7 @@
         // eslint-disable-next-line no-await-in-loop
         if(await probe(url)){ status(`OK → base: ${base}\nview: ${VIEW}`, '#2e7d32'); return base; }
       }
-      status(
-        `No start tile found.\nLooked under:\n- ${baseCandidates.join('\n- ')}\n`+
-        `Expected: tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${EXT}`, '#b71c1c'
-      );
+      status(`No start tile found.\nLooked under:\n- ${baseCandidates.join('\n- ')}\nExpected: tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${EXT}`, '#b71c1c');
       throw new Error('Could not resolve base');
     }
 
@@ -125,19 +120,18 @@
       const statusEl = document.getElementById('status');
       const hud = document.getElementById('hud');
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
-      status(`BASE ok • ISO view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
+      status(`BASE ok • FLAT view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
 
-      // --------- Tile layer with z0 normalization (prevents far-zoom blackout) ---------
+      // ---- Tile layer with z0 normalization (prevents far-zoom blackout) ----
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
-          // normalize current grid (coords.z) to native z0 grid
           const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
           const scale  = Math.pow(2, -zTile);  // z0 => 1, z=-3 => 8
           const lx0 = Math.floor(coords.x * scale);
           const ly0 = Math.floor(coords.y * scale);
 
           const fx = MIN_X + lx0;
-          const fy = MAX_Y - ly0;              // flip Y for correct row order
+          const fy = MAX_Y - ly0;              // flip Y to fix row order
 
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
 
@@ -154,7 +148,7 @@
         zoomControl: true
       });
 
-      // Deep zoom-out (like YOM)
+      // Deep zoom-out
       const EXTRA_OUT = 6;
       map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
@@ -166,35 +160,31 @@
         keepBuffer: 4
       }).addTo(map);
 
-      // Bounds & initial view (fit whole atlas)
+      // Bounds & initial view
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
       map.fitBounds(L.latLngBounds(bounds).pad(0.12));
 
-      // Transparent tile for gaps; log real misses
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // --------- Seam-free HUD: global z0 pixels → world X/Z (south-positive) ---------
+      // ---- HUD: global z0 pixels → world X/Z (south-positive) ----
       const PPB = TILE / BUCKET; // z0 pixels per block
 
       function updateHUD(latlng){
         const z  = map.getZoom();
-        const pz = map.project(latlng, z);      // pixels at current zoom
-        const scale = Math.pow(2, -z);          // normalize to z0 pixels
+        const pz = map.project(latlng, z);
+        const scale = Math.pow(2, -z);
         const px0 = pz.x * scale;
         const py0 = pz.y * scale;
 
-        // Continuous world coords from global pixels (no per-tile stitching)
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
 
-        // South-positive Z (going up/north -> Z goes down)
         const Xf = Xf_south + X_OFFSET;
-        const Zf = Zf_south + Z_OFFSET;
+        const Zf = Zf_south + Z_OFFSET;  // south-positive
 
-        // File tile (for URL/debug), matching renderer's Y flip
         const lx = Math.floor(px0 / TILE);
         const ly = Math.floor(py0 / TILE);
         const fx = MIN_X + lx;
@@ -204,26 +194,22 @@
         hud.innerHTML =
           `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>` +
           `  | b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
-
-        return { Xf, Zf, fx, fy, gx, gy };
       }
 
       map.on('mousemove', e => updateHUD(e.latlng));
-
-      // Click: copy integer block coords, also show the tile URL in status
       map.on('click', e => {
-        const info = updateHUD(e.latlng);
-        const Xi = Math.floor(info.Xf);
-        const Zi = Math.floor(info.Zf);
-        const url = `${withSlash(BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
-        navigator.clipboard?.writeText(`${Xi} ${Zi}`);
-        const msg = `copied coords: ${Xi} ${Zi}\n${url}`;
-        const statusEl = document.getElementById('status');
-        statusEl.textContent = msg; statusEl.style.background = '#2e7d32';
-        setTimeout(()=>{ statusEl.textContent = `BASE ok • ISO view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`; statusEl.style.background = '#2e7d32'; }, 1400);
+        const z  = map.getZoom();
+        const pz = map.project(e.latlng, z);
+        const scale = Math.pow(2, -z);
+        const px0 = pz.x * scale, py0 = pz.y * scale;
+        const Xf = (px0 / (TILE/BUCKET)) + (MIN_X * 32) + X_OFFSET;
+        const Zf = (py0 / (TILE/BUCKET)) + (MIN_Y * 32) + Z_OFFSET;
+        navigator.clipboard?.writeText(`${Math.floor(Xf)} ${Math.floor(Zf)}`);
+        status(`copied coords: ${Math.floor(Xf)} ${Math.floor(Zf)}`, '#2e7d32');
+        setTimeout(()=>status(`BASE ok • FLAT view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1400);
       });
 
-      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
+      console.log('Resolved', { VIEW, MIN_X, MAX_X, MIN_Y, MAX_Y });
     })();
   </script>
 </body>
