@@ -26,7 +26,7 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13M • FLAT tiles • seam-free X / Z(north+)</div>
+  <div id="badge">v13N • FLAT tiles • seam-free X / Z(north+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
@@ -44,7 +44,7 @@
     const VIEW   = "flat";     // FLAT = exact pixel→block mapping
     const EXT    = "jpg";
     const BUCKET = 32;         // dynmap HD tiles cover 32×32 blocks
-    const VERSION = "v13M";    // cache-buster
+    const VERSION = "v13N";    // cache-buster
     const INVERT_Z = true;     // show Z as north-positive
 
     // Derived limits (file/tile indices)
@@ -132,7 +132,7 @@
           const ly0 = Math.floor(coords.y * scale);
 
           const fx = MIN_X + lx0;
-          const fy = MIN_Y + ly0; // Y increases downward in files (FLAT)
+          const fy = MAX_Y - ly0; // <-- Y FLIP for file rows (fixes bottom/top)
 
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
 
@@ -181,18 +181,18 @@
         const px0 = pz.x * scale;
         const py0 = pz.y * scale;
 
-        // continuous world coords from global pixels (no per-tile stitching)
+        // continuous world coords from global pixels
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
 
         const Xf = Xf_south;
         const Zf = INVERT_Z ? -Zf_south : Zf_south;
 
-        // compute file tile for URL/debug (not used for coords)
+        // compute file tile for URL/debug using SAME Y FLIP as the renderer
         const lx = Math.floor(px0 / TILE);
         const ly = Math.floor(py0 / TILE);
         const fx = MIN_X + lx;
-        const fy = MIN_Y + ly;
+        const fy = MAX_Y - ly;  // <-- match getTileUrl()
         const gx = group(fx), gy = group(fy);
 
         hud.innerHTML =
