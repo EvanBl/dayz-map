@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map v13b</title>
+  <title>DayZ World Map v13d</title>
 
   <!-- kill caching -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -19,30 +19,38 @@
       padding: 6px 10px; border-radius: 8px; font: 14px system-ui, sans-serif; color: #fff;
     }
     #badge  { top: 10px;  background: #2e7d32; }
-    #status { top: 44px; background: #1565c0; max-width: 70vw; word-break: break-all; }
+    #status { top: 44px; background: #1565c0; max-width: 80vw; word-break: break-all; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13b • bucket=32 • FLOOR</div>
-  <div id="status">resolving base…</div>
+  <div id="badge">v13d • FLOOR • auto-view</div>
+  <div id="status">booting…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---------- CONFIG: match your repo ----------
-    const GX_MIN = -3, GX_MAX =  2;   // existing folders
-    const GY_MIN = -6, GY_MAX =  6;
+    // ---------- EDIT THESE 4 TO MATCH YOUR FOLDER RANGE ----------
+    const GX_MIN = -3, GX_MAX =  2;   // bucket folders you have (X)
+    const GY_MIN = -6, GY_MAX =  6;   // bucket folders you have (Y)
 
-    const START_X = -10;              // real, existing tile
+    // A real existing tile you know (from your tree screenshots)
+    const START_X = -10;
     const START_Y = -33;
 
     // ---------- CONSTANTS ----------
-    const WORLD  = "world";
-    const VIEW   = "flat";
     const EXT    = "jpg";
     const TILE   = 128;
     const BUCKET = 32;
-    const VERSION = "v13b";           // cache-bust
+    const VERSION = "v13d";
+
+    // Likely view folder names (order matters). We'll probe them.
+    const VIEW_CANDIDATES = [
+      "flat",                 // default top-down
+      "surface",              // common custom name
+      "iso_SE_30_hires",      // your worlds.txt perspective
+      "iso_SE_30",
+      "isometric",
+    ];
 
     const MIN_X = GX_MIN * BUCKET;
     const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
@@ -52,28 +60,34 @@
     const widthTiles  = MAX_X - MIN_X + 1;
     const heightTiles = MAX_Y - MIN_Y + 1;
 
-    // Map Leaflet tile index -> file coords
+    const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+
+    // Helpers
     const fileX = (lx) => MIN_X + lx;
     const fileY = (ly) => MIN_Y + ly;
 
-    // --------- SAFE FLOOR DIVISION for negatives ----------
     function floorDiv(n, d) {
       if (n >= 0) return Math.floor(n / d);
-      const q = Math.trunc(n / d);        // toward 0
-      return (q * d === n) ? q : q - 1;   // step more negative if remainder
+      const q = Math.trunc(n / d);      // toward 0
+      return (q * d === n) ? q : q - 1; // step more negative if remainder
     }
-    const group = (n) => floorDiv(n, BUCKET);  // FLOOR bucketing
+    const group = (n) => floorDiv(n, BUCKET);
 
-    // --------- Resolve the correct BASE automatically ----------
-    function withSlash(s){ return s.endsWith('/') ? s : s + '/'; }
+    const status = (msg, color='#1565c0') => {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.style.background = color;
+    };
+    const withSlash = s => s.endsWith('/') ? s : s + '/';
 
+    // Build 2 base candidates: where this file is, and the hard repo root
     const locationBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
     const hardBase     = 'https://evanbl.github.io/dayz-map/';
 
-    const startFolder = `${group(START_X)}_${group(START_Y)}`;
-    const startPath   = `tiles/${WORLD}/${VIEW}/${startFolder}/${START_X}_${START_Y}.${EXT}?${VERSION}`;
+    const folderXY = `${group(START_X)}_${group(START_Y)}`;
+    const makePath = (view) => `tiles/world/${view}/${folderXY}/${START_X}_${START_Y}.${EXT}?${VERSION}`;
 
-    function probe(url, timeoutMs=5000) {
+    function probe(url, timeoutMs=6000) {
       return new Promise((resolve) => {
         const img = new Image();
         const timer = setTimeout(() => { img.src=''; resolve(false); }, timeoutMs);
@@ -83,64 +97,71 @@
       });
     }
 
-    async function resolveBase() {
-      const status = (msg, color='#1565c0') => {
-        const el = document.getElementById('status');
-        el.textContent = msg;
-        el.style.background = color;
-      };
-
-      const cand1 = withSlash(locationBase);
-      const cand2 = withSlash(hardBase);
-
-      status(`trying base #1 ${cand1} …`);
-      if (await probe(cand1 + startPath)) {
-        status(`using base: ${cand1}`, '#2e7d32');
-        return cand1;
+    async function resolveBaseAndView() {
+      const bases = [withSlash(locationBase), withSlash(hardBase)];
+      for (const base of bases) {
+        for (const view of VIEW_CANDIDATES) {
+          const url = base + makePath(view);
+          status(`probing:\n${url}`);
+          // eslint-disable-next-line no-await-in-loop
+          if (await probe(url)) {
+            status(`OK → base: ${base}\nview: ${view}\nstart: ${url}`, '#2e7d32');
+            return { base, view };
+          }
+        }
       }
-
-      status(`trying base #2 ${cand2} …`);
-      if (await probe(cand2 + startPath)) {
-        status(`using base: ${cand2}`, '#2e7d32');
-        return cand2;
-      }
-
-      status(`couldn't load START tile from either base.
-#1 ${cand1 + startPath}
-#2 ${cand2 + startPath}`, '#b71c1c');
-      throw new Error('No valid base for tiles');
+      status(
+        `No start tile found.\nTried bases:\n- ${withSlash(locationBase)}\n- ${withSlash(hardBase)}\n`+
+        `and views: ${VIEW_CANDIDATES.join(', ')}\n\n`+
+        `Check your repo: tiles/world/<view>/<gx>_<gy>/${START_X}_${START_Y}.${EXT}`,
+        '#b71c1c'
+      );
+      throw new Error('Could not resolve base/view');
     }
 
-    // --------- Boot the map once base is resolved ----------
+    function computeSafeMinZoom() {
+      const worldPxW = widthTiles * TILE;
+      const worldPxH = heightTiles * TILE;
+      const needFactor = Math.max(worldPxW / window.innerWidth, worldPxH / window.innerHeight);
+      let z = 0;
+      while ((1 << (-z)) < needFactor && z > -8) z--;  // cap to -8
+      return z;
+    }
+
     (async () => {
       try {
-        const BASE = await resolveBase();
+        const { base: BASE, view: VIEW } = await resolveBaseAndView();
 
-        // Tile layer
+        // Tile layer that clamps out-of-range requests (no blackouts)
         const DynmapLayer = L.TileLayer.extend({
           getTileUrl: function (coords) {
             const fx = fileX(coords.x);
             const fy = fileY(coords.y);
+            if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
             const gx = group(fx);
             const gy = group(fy);
-            return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
+            return `${BASE}tiles/world/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
           }
         });
 
-        // Map init
         const map = L.map('map', {
           crs: L.CRS.Simple,
-          minZoom: -5,
-          maxZoom:  2,
-          zoomSnap: 1,
-          wheelPxPerZoomLevel: 80,
-          zoomControl: true,
+          minZoom: 0, maxZoom: 2,
+          zoomSnap: 1, wheelPxPerZoomLevel: 80,
+          updateWhenZooming: false,
+          zoomControl: true
         });
+
+        // Safe zoom-out so you don't zoom into "all black"
+        const safeMin = computeSafeMinZoom();
+        map.setMinZoom(safeMin);
 
         const layer = new DynmapLayer('', {
           tileSize: TILE,
           noWrap: true,
-          maxNativeZoom: 0
+          minNativeZoom: 0,
+          maxNativeZoom: 0,
+          keepBuffer: 4
         }).addTo(map);
 
         // CRS.Simple: invert Y when converting to lat
@@ -148,24 +169,17 @@
         const startLeafletY = START_Y - MIN_Y;
         const startLat = -(startLeafletY * TILE);
         const startLng =  (startLeafletX * TILE);
-        map.setView([startLat, startLng], -1);
+        map.setView([startLat, startLng], Math.max(-1, safeMin));
 
         // Bounds (top negative, bottom 0)
         const bounds = [[-(heightTiles * TILE), 0], [0, widthTiles * TILE]];
         map.setMaxBounds(bounds);
         map.options.maxBoundsViscosity = 1.0;
 
-        // Transparent 1x1 for 404 holes
-        L.TileLayer.prototype.options.errorTileUrl =
-          'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
-
-        // Helpful logs
-        console.log("Resolved BASE:", BASE);
-        console.log(
-          "Start URL:",
-          `${BASE}tiles/${WORLD}/${VIEW}/${group(START_X)}_${group(START_Y)}/${START_X}_${START_Y}.${EXT}?${VERSION}`
-        );
+        // Log 404s if any single tile is missing inside the valid range
         layer.on('tileerror', e => console.warn('404 tile:', e.tile.src));
+
+        console.log('Resolved', { BASE, VIEW, START_X, START_Y, folderXY, GX_MIN, GX_MAX, GY_MIN, GY_MAX });
 
       } catch (e) {
         console.error(e);
