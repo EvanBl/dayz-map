@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map — FLAT (south+ Z)</title>
-
+  <title>DayZ World Map — ISO (south+ Z)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     html, body, #map { height:100%; margin:0; padding:0; }
@@ -21,49 +19,50 @@
     #badge  { top:10px; background:#2e7d32; }
     #status { top:44px; background:#1565c0; max-width:80vw; white-space:pre-wrap; word-break:break-all; }
     #hud    { bottom:10px; background:rgba(0,0,0,.6); font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    #hud b { color:#8bc34a; }
+    #hud b  { color:#8bc34a; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v14-FLAT • view=flat • Z(south+)</div>
+  <div id="badge">v15-ISO • view=ct • Z(south+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ---- CONFIG: set these to your actual folder coverage ----
-    const GX_MIN = -3, GX_MAX =  2;    // bucket folders along X
-    const GY_MIN = -6, GY_MAX =  6;    // bucket folders along Y
+    // ===== RANGES from your visibilitylimits (computed) =====
+    // x: -2640..2720, z: -2720..5536  --> tiles: X:-83..84, Y:-85..172
+    // buckets (groups of 32 tiles): GX:-3..2, GY:-3..5
+    const GX_MIN = -3, GX_MAX =  2;
+    const GY_MIN = -3, GY_MAX =  5;
 
-    // A tile that exists (for probing)
+    // A known-good file tile (inside your area) to probe:
     const START_X = -10, START_Y = -33;
 
-    // ---- CONSTANTS ----
+    // ---- constants ----
     const WORLD  = "world";
-    const VIEW   = "flat";   // <-- using flat tiles
-    const EXT    = "jpg";    // change to "png" if your flat tiles are png
-    const BUCKET = 32;       // one tile = 32×32 blocks
-    const VERSION = "v14_flat_southpos";
+    const VIEW   = "ct";        // ISO tiles
+    const BUCKET = 32;          // blocks per tile edge
+    const VERSION = "v15_iso_south";
 
-    // Z orientation + optional offsets (none needed)
-    const SOUTH_POSITIVE_Z = true; // going up/north -> Z goes down
+    // orientation + offsets
+    const SOUTH_POSITIVE_Z = true; // moving up/north makes Z go down
     const X_OFFSET = 0, Z_OFFSET = 0;
 
-    // Derived bounds in file-tile coords
-    const MIN_X = GX_MIN * BUCKET;
-    const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
-    const MIN_Y = GY_MIN * BUCKET;
-    const MAX_Y = GY_MAX * BUCKET + (BUCKET - 1);
-    const widthTiles  = MAX_X - MIN_X + 1;
-    const heightTiles = MAX_Y - MIN_Y + 1;
+    // derived file-tile bounds
+    const MIN_X = Math.floor(-2640 / 32);           // -83
+    const MAX_X = Math.ceil(2720 / 32) - 1;         // 84
+    const MIN_Y = Math.floor(-2720 / 32);           // -85
+    const MAX_Y = Math.ceil(5536 / 32) - 1;         // 172
+    const widthTiles  = MAX_X - MIN_X + 1;          // 168
+    const heightTiles = MAX_Y - MIN_Y + 1;          // 258
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
     // ---- helpers ----
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group = (n) => floorDiv(n, BUCKET);
-    const withSlash = s => s.endsWith('/') ? s : s + '/';
+    const withSlash = (s) => s.endsWith('/') ? s : s + '/';
 
     // Try common GH Pages bases (root, /docs)
     const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
@@ -72,28 +71,16 @@
     const baseCandidates = [ currentDirBase, repoRootBase, withSlash(currentDirBase+'docs/'), withSlash(repoRootBase+'docs/') ];
 
     const folderXY = `${group(START_X)}_${group(START_Y)}`;
-    const makePath = () => `tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${EXT}`;
+    const makePath = (ext) => `tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${ext}`;
 
     function probe(url, timeoutMs=6000){
       return new Promise((resolve)=>{
-        const img=new Image();
-        const t=setTimeout(()=>{img.src='';resolve(false)}, timeoutMs);
-        img.onload=()=>{clearTimeout(t); resolve(true)};
-        img.onerror=()=>{clearTimeout(t); resolve(false)};
-        img.src=url + "?probe=" + VERSION;
+        const img = new Image();
+        const t = setTimeout(()=>{img.src=''; resolve(false)}, timeoutMs);
+        img.onload = ()=>{ clearTimeout(t); resolve(true); };
+        img.onerror = ()=>{ clearTimeout(t); resolve(false); };
+        img.src = url + "?probe=" + VERSION;
       });
-    }
-
-    async function resolveBase(){
-      const status = (m,c='#1565c0')=>{const el=document.getElementById('status'); el.textContent=m; el.style.background=c;};
-      for(const base of baseCandidates){
-        const url = withSlash(base) + makePath();
-        status(`probing:\n${url}`);
-        // eslint-disable-next-line no-await-in-loop
-        if(await probe(url)){ status(`OK → base: ${base}\nview: ${VIEW}`, '#2e7d32'); return base; }
-      }
-      status(`No start tile found.\nLooked under:\n- ${baseCandidates.join('\n- ')}\nExpected: tiles/${WORLD}/${VIEW}/${folderXY}/${START_X}_${START_Y}.${EXT}`, '#b71c1c');
-      throw new Error('Could not resolve base');
     }
 
     async function detectTileSize(url){
@@ -105,38 +92,58 @@
       });
     }
 
+    // Resolve BASE + EXT (try png, then jpg)
+    async function resolveSource(){
+      const status = (m,c='#1565c0')=>{const el=document.getElementById('status'); el.textContent=m; el.style.background=c;};
+      const exts = ['png','jpg'];
+      for (const base of baseCandidates){
+        for (const ext of exts){
+          const url = withSlash(base) + makePath(ext);
+          status(`probing:\n${url}`);
+          // eslint-disable-next-line no-await-in-loop
+          if (await probe(url)){
+            const TILE = await detectTileSize(url);
+            status(`OK → base: ${base}\nview: ${VIEW} • ext: .${ext} • tile: ${TILE}px`, '#2e7d32');
+            return { BASE: withSlash(base), EXT: ext, TILE };
+          }
+        }
+      }
+      const tried = baseCandidates.map(b => `- ${withSlash(b)}${makePath('png')}\n- ${withSlash(b)}${makePath('jpg')}`).join('\n');
+      const msg = `No start tile found.\nLooked under:\n${tried}\n(After your ISO render completes, one of those should exist.)`;
+      const el=document.getElementById('status'); el.textContent = msg; el.style.background = '#b71c1c';
+      throw new Error('Could not resolve source');
+    }
+
     function computeSafeMinZoom(TILE){
       const worldPxW = widthTiles * TILE;
       const worldPxH = heightTiles * TILE;
       const need = Math.max(worldPxW / innerWidth, worldPxH / innerHeight);
-      let z = 0; while ((1 << (-z)) < need && z > -8) z--; return z;
+      let z = 0; while ((1 << (-z)) < need && z > -12) z--; return z;
     }
 
     (async () => {
-      const BASE = await resolveBase();
-      const startURL = `${withSlash(BASE)}${makePath()}`;
-      const TILE = await detectTileSize(startURL);
+      const { BASE, EXT, TILE } = await resolveSource();
 
       const statusEl = document.getElementById('status');
       const hud = document.getElementById('hud');
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
-      status(`BASE ok • FLAT view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
 
       // ---- Tile layer with z0 normalization (prevents far-zoom blackout) ----
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
+          // normalize current grid (coords.z) to native z0 grid
           const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
           const scale  = Math.pow(2, -zTile);  // z0 => 1, z=-3 => 8
           const lx0 = Math.floor(coords.x * scale);
           const ly0 = Math.floor(coords.y * scale);
 
           const fx = MIN_X + lx0;
-          const fy = MAX_Y - ly0;              // flip Y to fix row order
+          const fy = MAX_Y - ly0;              // flip Y for correct row order
 
-          if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
+          if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
           const gx = group(fx), gy = group(fy);
-          return `${withSlash(BASE)}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
+          return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
         }
       });
 
@@ -148,7 +155,7 @@
         zoomControl: true
       });
 
-      // Deep zoom-out
+      // Deep zoom-out: match your server's extrazoomout: 6 feel
       const EXTRA_OUT = 6;
       map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
@@ -160,13 +167,14 @@
         keepBuffer: 4
       }).addTo(map);
 
-      // Bounds & initial view
+      // Bounds & initial view (fit whole atlas)
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
       map.fitBounds(L.latLngBounds(bounds).pad(0.12));
 
-      L.TileLayer.prototype.options.errorTileUrl = BLANK;
+      // Transparent tile for gaps; log misses
+      L.TileLayer.prototype.options.errorTileUrl = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
       // ---- HUD: global z0 pixels → world X/Z (south-positive) ----
@@ -174,17 +182,20 @@
 
       function updateHUD(latlng){
         const z  = map.getZoom();
-        const pz = map.project(latlng, z);
-        const scale = Math.pow(2, -z);
+        const pz = map.project(latlng, z);      // pixels at current zoom
+        const scale = Math.pow(2, -z);          // normalize to z0 pixels
         const px0 = pz.x * scale;
         const py0 = pz.y * scale;
 
+        // Continuous world coords from global pixels (no per-tile stitching)
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
 
+        // South-positive Z (going up/north -> Z goes down)
         const Xf = Xf_south + X_OFFSET;
-        const Zf = Zf_south + Z_OFFSET;  // south-positive
+        const Zf = Zf_south + Z_OFFSET;
 
+        // File tile (for URL/debug), matching renderer's Y flip
         const lx = Math.floor(px0 / TILE);
         const ly = Math.floor(py0 / TILE);
         const fx = MIN_X + lx;
@@ -194,22 +205,21 @@
         hud.innerHTML =
           `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>` +
           `  | b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
+
+        return { Xf, Zf, fx, fy, gx, gy };
       }
 
       map.on('mousemove', e => updateHUD(e.latlng));
       map.on('click', e => {
-        const z  = map.getZoom();
-        const pz = map.project(e.latlng, z);
-        const scale = Math.pow(2, -z);
-        const px0 = pz.x * scale, py0 = pz.y * scale;
-        const Xf = (px0 / (TILE/BUCKET)) + (MIN_X * 32) + X_OFFSET;
-        const Zf = (py0 / (TILE/BUCKET)) + (MIN_Y * 32) + Z_OFFSET;
-        navigator.clipboard?.writeText(`${Math.floor(Xf)} ${Math.floor(Zf)}`);
-        status(`copied coords: ${Math.floor(Xf)} ${Math.floor(Zf)}`, '#2e7d32');
-        setTimeout(()=>status(`BASE ok • FLAT view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1400);
+        const info = updateHUD(e.latlng);
+        navigator.clipboard?.writeText(`${Math.floor(info.Xf)} ${Math.floor(info.Zf)}`);
+        const url = `${BASE}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
+        const msg = `copied coords: ${Math.floor(info.Xf)} ${Math.floor(info.Zf)}\n${url}`;
+        status(msg, '#2e7d32');
+        setTimeout(()=>status(`BASE ok • ISO view=${VIEW} • .${EXT} • tile=${TILE}px`, '#2e7d32'), 1400);
       });
 
-      console.log('Resolved', { VIEW, MIN_X, MAX_X, MIN_Y, MAX_Y });
+      console.log('Resolved', { BASE, EXT, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
     })();
   </script>
 </body>
