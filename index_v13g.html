@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map v13g</title>
+  <title>DayZ World Map v13h</title>
 
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
@@ -26,34 +26,33 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13g • iso visual • ground X/Z</div>
+  <div id="badge">v13h • iso visual • ground X/Z • z0-normalized</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
   <div id="hint">Click to copy tile URL</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // -------------- CONFIG: set folder ranges you actually have --------------
-    const GX_MIN = -3, GX_MAX =  2;   // bucket folders on X
-    const GY_MIN = -6, GY_MAX =  6;   // bucket folders on Y
+    // ---------------- CONFIG: set your bucket folder ranges ----------------
+    const GX_MIN = -3, GX_MAX =  2;     // X bucket folders present
+    const GY_MIN = -6, GY_MAX =  6;     // Y bucket folders present
 
     // A known-good tile that exists in your repo
     const START_X = -10, START_Y = -33;
 
-    // -------------- CONSTANTS --------------
+    // ---------------- CONSTANTS ----------------
     const WORLD  = "world";
     const EXT    = "jpg";
-    const BUCKET = 32;                // dynmap HD tiles cover 32x32 blocks
-    const VERSION = "v13g";           // cache-buster
+    const BUCKET = 32;                  // dynmap HD tiles cover 32x32 blocks
+    const VERSION = "v13h";             // cache-buster
 
+    // Prefer isometric visual, then fall back to flat if missing
     const VIEW_CANDIDATES = [
-      // try your isometric names first
       "iso_SE_30_hires", "surface", "iso_SE_30", "isometric",
-      // then flat as a safe fallback
       "flat"
     ];
 
-    // derived tile-index limits (file coords)
+    // Derived index limits (file coords)
     const MIN_X = GX_MIN * BUCKET;
     const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
     const MIN_Y = GY_MIN * BUCKET;
@@ -63,13 +62,14 @@
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // -------- helpers --------
+    // ---------------- helpers ----------------
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group = (n) => floorDiv(n, BUCKET);
 
     const withSlash = s => s.endsWith('/') ? s : s + '/';
     const locationBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
-    const hardBase     = 'https://evanbl.github.io/dayz-map/';  // adjust if your repo path changes
+    const hardBase     = withSlash(`${location.origin}${location.pathname}`.split('/').slice(0,3).join('/') + '/dayz-map/``
+      .replace('``','')); // fallback to repo root (adjust if your repo name changes)
 
     const folderXY = `${group(START_X)}_${group(START_Y)}`;
     const makePath = (view) => `tiles/${WORLD}/${view}/${folderXY}/${START_X}_${START_Y}.${EXT}`;
@@ -108,7 +108,7 @@
       });
     }
 
-    // file coords from Leaflet tile index (Y-axis FIX: files descend downward)
+    // Leaflet tile index -> file coords (Y-axis FIX: files descend downward)
     const fileX = (lx) => MIN_X + lx;
     const fileY = (ly) => MAX_Y - ly;
 
@@ -122,7 +122,7 @@
     (async () => {
       const { base: BASE, view: VIEW } = await resolveBaseAndView();
 
-      // detect the actual TILE px size from the chosen view
+      // detect actual TILE px size from chosen view
       const startURL = `${BASE}${makePath(VIEW)}`;
       const TILE = await detectTileSize(startURL);
 
@@ -131,12 +131,22 @@
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
       status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32');
 
-      // custom tile layer (clamps out-of-range to transparent; no 404 blackout)
+      // ------------ Tile layer (with z0 normalization to prevent blackouts) ------------
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
-          const fx = fileX(coords.x);
-          const fy = fileY(coords.y);
+          // Normalize from the current display tile grid (coords.z) to native z0 tile grid
+          const zUrl   = 0;                                      // we serve z0 tiles
+          const zTile  = (coords && typeof coords.z === 'number') ? coords.z
+                        : (this._tileZoom ?? this._map.getZoom() ?? 0);
+          const scale  = Math.pow(2, zUrl - zTile);              // e.g. at z=-3 => 8
+
+          const lx0 = Math.floor(coords.x * scale);
+          const ly0 = Math.floor(coords.y * scale);
+
+          const fx = fileX(lx0);
+          const fy = fileY(ly0);
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
+
           const gx = group(fx), gy = group(fy);
           return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
         }
@@ -150,52 +160,49 @@
         zoomControl: true
       });
 
-      map.setMinZoom(computeSafeMinZoom(TILE));
+      // Allow farther zoom-out than the safe fit (YOM-style)
+      const EXTRA_OUT = 3; // try 2–4
+      map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
       const layer = new DynmapLayer('', {
         tileSize: TILE,
         noWrap: true,
-        minNativeZoom: 0,
+        minNativeZoom: 0,   // tell Leaflet we only have z0 tiles
         maxNativeZoom: 0,
         keepBuffer: 4
       }).addTo(map);
 
-      // center on start tile (Y fixed)
-      const startLeafletX = START_X - MIN_X;
-      const startLeafletY = MAX_Y - START_Y;
-      const startLat = -(startLeafletY * TILE);
-      const startLng =  (startLeafletX * TILE);
-      map.setView([startLat, startLng], -1);
-
-      // keep panning inside bounds
+      // Bounds & initial view
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
+      map.fitBounds(L.latLngBounds(bounds).pad(0.12)); // show whole world
 
+      // 1x1 transparent for any holes; log genuine misses
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // ------ HUD: ground-accurate X/Z (no height) ------
+      // ---------------- Ground-accurate X/Z HUD (no height) ----------------
       const PPB = TILE / BUCKET; // pixels per block at zoom 0
 
       function updateHUD(latlng){
-        // project latlng to pixel space at z0
+        // project to pixel space at z0
         const p = map.project(latlng, 0);
         const px = p.x, py = p.y;
 
-        // which Leaflet tile index?
+        // z0 tile index
         const lx = Math.floor(px / TILE);
         const ly = Math.floor(py / TILE);
 
-        // pixel offset inside tile
+        // pixel offset within tile
         const u = px - lx * TILE;
         const v = py - ly * TILE;
 
-        // matching file tile + bucket
+        // file tile + bucket
         const fx = fileX(lx), fy = fileY(ly);
         const gx = group(fx), gy = group(fy);
 
-        // ground coordinates (blocks)
+        // world (block) coords on ground
         const worldX = fx*BUCKET + Math.floor(u / PPB);
         const worldZ = fy*BUCKET + Math.floor(v / PPB);
 
