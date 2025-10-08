@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map v13h</title>
+  <title>DayZ World Map v13i</title>
 
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
@@ -26,7 +26,7 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13h • iso visual • ground X/Z • z0-normalized</div>
+  <div id="badge">v13i • iso visual • ground X/Z • z0-normalized</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
   <div id="hint">Click to copy tile URL</div>
@@ -44,7 +44,7 @@
     const WORLD  = "world";
     const EXT    = "jpg";
     const BUCKET = 32;                  // dynmap HD tiles cover 32x32 blocks
-    const VERSION = "v13h";             // cache-buster
+    const VERSION = "v13i";             // cache-buster
 
     // Prefer isometric visual, then fall back to flat if missing
     const VIEW_CANDIDATES = [
@@ -67,9 +67,11 @@
     const group = (n) => floorDiv(n, BUCKET);
 
     const withSlash = s => s.endsWith('/') ? s : s + '/';
-    const locationBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
-    const hardBase     = withSlash(`${location.origin}${location.pathname}`.split('/').slice(0,3).join('/') + '/dayz-map/``
-      .replace('``','')); // fallback to repo root (adjust if your repo name changes)
+
+    // Base candidates: the current folder, and the repo root (/user/repo/)
+    const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
+    const pathParts = location.pathname.split('/').filter(Boolean); // ["dayz-map", "index.html"] or ["dayz-map","docs","index.html"]
+    const repoBase = pathParts.length ? withSlash(`${location.origin}/${pathParts[0]}/`) : withSlash(location.origin + '/');
 
     const folderXY = `${group(START_X)}_${group(START_Y)}`;
     const makePath = (view) => `tiles/${WORLD}/${view}/${folderXY}/${START_X}_${START_Y}.${EXT}`;
@@ -86,7 +88,7 @@
 
     async function resolveBaseAndView(){
       const status = (m,c='#1565c0')=>{const el=document.getElementById('status'); el.textContent=m; el.style.background=c;};
-      const bases=[withSlash(locationBase), withSlash(hardBase)];
+      const bases=[currentDirBase, repoBase];
       for(const base of bases){
         for(const view of VIEW_CANDIDATES){
           const url = base + makePath(view);
@@ -95,7 +97,7 @@
           if(await probe(url)){ status(`OK → base: ${base}\nview: ${view}`, '#2e7d32'); return {base, view}; }
         }
       }
-      status(`No start tile found. Checked:\n- ${withSlash(locationBase)}\n- ${withSlash(hardBase)}\nviews: ${VIEW_CANDIDATES.join(', ')}`, '#b71c1c');
+      status(`No start tile found. Checked:\n- ${currentDirBase}\n- ${repoBase}\nviews: ${VIEW_CANDIDATES.join(', ')}`, '#b71c1c');
       throw new Error('Could not resolve base/view');
     }
 
@@ -134,11 +136,10 @@
       // ------------ Tile layer (with z0 normalization to prevent blackouts) ------------
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
-          // Normalize from the current display tile grid (coords.z) to native z0 tile grid
-          const zUrl   = 0;                                      // we serve z0 tiles
-          const zTile  = (coords && typeof coords.z === 'number') ? coords.z
+          // Normalize from current tile grid (coords.z) to native z0 grid
+          const zTile = (coords && typeof coords.z === 'number') ? coords.z
                         : (this._tileZoom ?? this._map.getZoom() ?? 0);
-          const scale  = Math.pow(2, zUrl - zTile);              // e.g. at z=-3 => 8
+          const scale  = Math.pow(2, -zTile); // z0 => 1, z=-3 => 8
 
           const lx0 = Math.floor(coords.x * scale);
           const ly0 = Math.floor(coords.y * scale);
@@ -167,16 +168,16 @@
       const layer = new DynmapLayer('', {
         tileSize: TILE,
         noWrap: true,
-        minNativeZoom: 0,   // tell Leaflet we only have z0 tiles
+        minNativeZoom: 0,   // we only have z0 tiles
         maxNativeZoom: 0,
         keepBuffer: 4
       }).addTo(map);
 
-      // Bounds & initial view
+      // Bounds & initial view (show whole world)
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
-      map.fitBounds(L.latLngBounds(bounds).pad(0.12)); // show whole world
+      map.fitBounds(L.latLngBounds(bounds).pad(0.12));
 
       // 1x1 transparent for any holes; log genuine misses
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
@@ -202,7 +203,7 @@
         const fx = fileX(lx), fy = fileY(ly);
         const gx = group(fx), gy = group(fy);
 
-        // world (block) coords on ground
+        // ground (block) coords
         const worldX = fx*BUCKET + Math.floor(u / PPB);
         const worldZ = fy*BUCKET + Math.floor(v / PPB);
 
