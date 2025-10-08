@@ -179,45 +179,56 @@
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // ---------------- Ground-accurate X/Z (block units) ----------------
-      // FLAT view: 1 px per block at z0 → PPB = TILE / 32
-      const PPB = TILE / BUCKET;
-
+      // FLAT tiles: pixels-per-block at z0
+      const PPB = TILE / 32; // 128px tile -> 4 px per block
+      
       function updateHUD(latlng){
-        // project to pixel space at z0
-        const p = map.project(latlng, 0);
-        const px = p.x, py = p.y;
-
-        // z0 tile index
-        const lx = Math.floor(px / TILE);
-        const ly = Math.floor(py / TILE);
-
-        // pixel offset within tile
-        const u = px - lx * TILE;
-        const v = py - ly * TILE;
-
-        // file tile + bucket
-        const fx = fileX(lx), fy = fileY(ly);
-        const gx = group(fx), gy = group(fy);
-
-        // ground coords on FLAT (exact 1:1)
-        const worldX = fx*BUCKET + Math.floor(u / PPB);
-        let worldZ  = fy*BUCKET + Math.floor(v / PPB);
-        if (INVERT_Z) worldZ = -worldZ; // your default
-
+        // 1) project mouse to CURRENT zoom pixels
+        const z  = map.getZoom();
+        const pz = map.project(latlng, z);         // pixels at current zoom
+      
+        // 2) normalize to z0 pixels (so filenames/TILE math line up)
+        const scale = Math.pow(2, -z);             // e.g. z=-3 => 8
+        const px0 = pz.x * scale;
+        const py0 = pz.y * scale;
+      
+        // 3) world coords directly from global z0 pixels (no seams)
+        //    left/top of the whole atlas corresponds to MIN_X/MIN_Y
+        const Xf_south = (px0 / PPB) + (MIN_X * 32);
+        const Zf_south = (py0 / PPB) + (MIN_Y * 32);
+      
+        // your chosen orientation: Z positive = north
+        const Xf = Xf_south;
+        const Zf = -Zf_south;
+      
+        // 4) still compute file tile for URL/debug (but DON'T use for coords)
+        const lx = Math.floor(px0 / TILE);
+        const ly = Math.floor(py0 / TILE);
+        const fx = MIN_X + lx;
+        const fy = MAX_Y - ly; // file Y flips for URLs
+        const gx = Math.floor(fx / 32);
+        const gy = Math.floor(fy / 32);
+      
+        // 5) show smooth decimals; floor only when you actually need block ints
         hud.innerHTML =
-          `X:<b>${worldX}</b>  Z:<b>${worldZ}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>`;
-        return {worldX, worldZ, fx, fy, gx, gy};
+          `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  ` +
+          `tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>  ` +
+          `| b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
+      
+        return { Xf, Zf, fx, fy, gx, gy };
       }
-
-      map.on('mousemove', e => updateHUD(e.latlng));
+      
+      // optional: when copying on click, round to int blocks
       map.on('click', e => {
         const info = updateHUD(e.latlng);
+        const Xi = Math.floor(info.Xf);
+        const Zi = Math.floor(info.Zf);
         const url = `${withSlash(BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
-        navigator.clipboard?.writeText(url);
-        status(`copied: ${url}`, '#2e7d32');
-        setTimeout(()=>status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1200);
+        navigator.clipboard?.writeText(`${Xi} ${Zi}`);
+        status(`copied coords: ${Xi} ${Zi}`, '#2e7d32');
+        setTimeout(()=>status(`tile: ${url}`, '#2e7d32'), 1200);
       });
+
 
       console.log('Resolved', { BASE: BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
     })();
