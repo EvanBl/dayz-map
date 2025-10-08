@@ -16,7 +16,7 @@
     #badge, #status, #hud {
       position:fixed; left:10px; z-index:9999;
       padding:6px 10px; border-radius:8px; color:#fff; font:14px system-ui, sans-serif;
-      pointer-events: none; /* let mouse events reach the map */
+      pointer-events:none; /* let mouse events pass through */
     }
     #badge  { top:10px; background:#2e7d32; }
     #status { top:44px; background:#1565c0; max-width:80vw; word-break:break-all; white-space:pre-wrap; }
@@ -26,28 +26,31 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">v13N • FLAT tiles • seam-free X / Z(north+)</div>
+  <div id="badge">v13N+offset • FLAT tiles • X / Z(north+)</div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // --------- CONFIG: set the bucket folder ranges you actually have ----------
-    const GX_MIN = -3, GX_MAX =  2;   // X bucket folders present
-    const GY_MIN = -6, GY_MAX =  6;   // Y bucket folders present
-
-    // A known-good tile that exists in your repo (for probing)
+    // ---------- CONFIG: set these to your actual folders/tiles ----------
+    const GX_MIN = -3, GX_MAX =  2;   // bucket folders along X (e.g., -3_-6 .. 2_6)
+    const GY_MIN = -6, GY_MAX =  6;   // bucket folders along Y
+    // A tile that exists (for probing)
     const START_X = -10, START_Y = -33;
 
-    // --------- CONSTANTS ----------
+    // ---------- CONSTANTS ----------
     const WORLD  = "world";
-    const VIEW   = "flat";     // FLAT = exact pixel→block mapping
+    const VIEW   = "flat";    // FLAT = exact pixel→block mapping
     const EXT    = "jpg";
-    const BUCKET = 32;         // dynmap HD tiles cover 32×32 blocks
-    const VERSION = "v13N";    // cache-buster
-    const INVERT_Z = true;     // show Z as north-positive
+    const BUCKET = 32;        // one tile = 32×32 blocks
+    const VERSION = "v13N_off";
+    const INVERT_Z = true;    // show Z as north-positive like your HUD
 
-    // Derived limits (file/tile indices)
+    // Offsets (calibrate against F3 at a known point)
+    const X_OFFSET = 0;
+    const Z_OFFSET = 875;     // <- your reported constant offset
+
+    // Derived bounds in file-tile coords
     const MIN_X = GX_MIN * BUCKET;
     const MAX_X = GX_MAX * BUCKET + (BUCKET - 1);
     const MIN_Y = GY_MIN * BUCKET;
@@ -57,12 +60,12 @@
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // --------- helpers ----------
+    // ---------- helpers ----------
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group = (n) => floorDiv(n, BUCKET);
     const withSlash = s => s.endsWith('/') ? s : s + '/';
 
-    // Try both root and /docs layouts (covers GH Pages setups)
+    // Try common bases (root, /docs) for GH Pages
     const currentDirBase = withSlash(location.origin + location.pathname.replace(/[^/]*$/, ''));
     const parts = location.pathname.split('/').filter(Boolean);
     const repoRootBase = parts.length ? withSlash(`${location.origin}/${parts[0]}/`) : withSlash(location.origin + '/');
@@ -127,12 +130,12 @@
         getTileUrl: function (coords) {
           // normalize current grid (coords.z) to native z0 grid
           const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
-          const scale  = Math.pow(2, -zTile); // z0 => 1, z=-3 => 8
+          const scale  = Math.pow(2, -zTile);  // z0 => 1, z=-3 => 8
           const lx0 = Math.floor(coords.x * scale);
           const ly0 = Math.floor(coords.y * scale);
 
           const fx = MIN_X + lx0;
-          const fy = MAX_Y - ly0; // <-- Y FLIP for file rows (fixes bottom/top)
+          const fy = MAX_Y - ly0;              // flip Y for correct row order
 
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
 
@@ -149,8 +152,8 @@
         zoomControl: true
       });
 
-      // Allow far zoom-out (YOM-style)
-      const EXTRA_OUT = 3; // lower to 2 if you want tighter steps
+      // Allow far zoom-out (like YOM feel on flat)
+      const EXTRA_OUT = 3;                   // tighten if needed
       map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
 
       const layer = new DynmapLayer('', {
@@ -181,18 +184,18 @@
         const px0 = pz.x * scale;
         const py0 = pz.y * scale;
 
-        // continuous world coords from global pixels
+        // Continuous world coords from global pixels (no per-tile stitching)
         const Xf_south = (px0 / PPB) + (MIN_X * 32);
         const Zf_south = (py0 / PPB) + (MIN_Y * 32);
 
-        const Xf = Xf_south;
-        const Zf = INVERT_Z ? -Zf_south : Zf_south;
+        const Xf = Xf_south + X_OFFSET;
+        const Zf = (INVERT_Z ? -Zf_south : Zf_south) + Z_OFFSET;
 
-        // compute file tile for URL/debug using SAME Y FLIP as the renderer
+        // File tile (for URL/debug), matching renderer's Y flip
         const lx = Math.floor(px0 / TILE);
         const ly = Math.floor(py0 / TILE);
         const fx = MIN_X + lx;
-        const fy = MAX_Y - ly;  // <-- match getTileUrl()
+        const fy = MAX_Y - ly;
         const gx = group(fx), gy = group(fy);
 
         hud.innerHTML =
@@ -215,7 +218,7 @@
         setTimeout(()=>status(`BASE ok • view=${VIEW} • tile=${TILE}px\nstart: ${startURL}`, '#2e7d32'), 1400);
       });
 
-      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
+      console.log('Resolved', { BASE, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y, Z_OFFSET });
     })();
   </script>
 </body>
