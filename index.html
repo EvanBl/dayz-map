@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map — Dynmap tiles via R2</title>
+  <title>DayZ World Map — R2 (fake zoom out)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -20,47 +20,47 @@
     #status { top:44px; background:#1565c0; max-width:80vw; white-space:pre-wrap; word-break:break-all; }
     #hud    { bottom:10px; background:rgba(0,0,0,.6); font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     #hud b  { color:#8bc34a; }
+    /* we’ll scale the tile/overlay panes, keep the map frame unscaled */
+    .scaled { transform-origin: top left; will-change: transform; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">R2 • Leaflet • extra-out=6 • view:<span id="viewname">t</span></div>
+  <div id="badge">R2 • fake extra-out=6 • view:<span id="viewname">t</span></div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ========= CONFIG =========
-    const WORLD   = "world";       // folder after /tiles/
-    const BUCKET  = 32;            // blocks per tile edge
-    const EXTRA_OUT = 6;           // you rendered 6 extra zoom-outs
-    const VERSION = "r2-v2";       // cache-buster
+    // ===== config =====
+    const WORLD   = "world";
+    const BUCKET  = 32;                // blocks per tile
+    const VERSION = "r2-fakezoom-v1";
     const R2_BASE = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
 
-    // Choose view: default 't' (your 30° iso hires). Override with ?view=flat|ct|t
+    // switch sets: t (iso 30° hires), flat, ct
     const qp = new URLSearchParams(location.search);
     const VIEW = (qp.get("view") || "t").trim();
     document.getElementById('viewname').textContent = VIEW;
 
-    // Visible world bounds (in blocks) — from your dynmap config
+    // your dynmap bounds (in blocks)
     const X_MIN_BLK = -2640, X_MAX_BLK = 2720;
     const Z_MIN_BLK = -2720, Z_MAX_BLK = 5536;
 
-    // A known-good file tile inside the render area (used to probe format/size)
+    // probe one known-good tile to learn ext + TILE size
     const START_X = -10, START_Y = -33;
 
-    // ====== derived constants ======
+    // derived file-tile bounds
     const MIN_X = Math.floor(X_MIN_BLK / BUCKET);
     const MAX_X = Math.ceil (X_MAX_BLK / BUCKET) - 1;
     const MIN_Y = Math.floor(Z_MIN_BLK / BUCKET);
     const MAX_Y = Math.ceil (Z_MAX_BLK / BUCKET) - 1;
-
     const widthTiles  = MAX_X - MIN_X + 1;
     const heightTiles = MAX_Y - MIN_Y + 1;
 
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
-    // Helpers
+    // helpers
     function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
     const group     = (n) => floorDiv(n, BUCKET);
     const withSlash = (s) => s.endsWith('/') ? s : s + '/';
@@ -77,7 +77,6 @@
         img.src = url + "?probe=" + VERSION;
       });
     }
-
     async function detectTileSize(url){
       return new Promise((resolve)=>{
         const img=new Image();
@@ -86,7 +85,6 @@
         img.src=url + "?size=" + VERSION;
       });
     }
-
     async function resolveSource(){
       const status = (m,c='#1565c0')=>{const el=document.getElementById('status'); el.textContent=m; el.style.background=c;};
       const base = withSlash(R2_BASE);
@@ -101,106 +99,99 @@
         }
       }
       const el=document.getElementById('status');
-      el.textContent = `No start tile found at:\n${base}${startPath('png')}\nCheck bucket access and path /tiles/${WORLD}/${VIEW}/...`;
+      el.textContent = `No start tile at:\n${base}${startPath('png')}\nCheck public access and /tiles/${WORLD}/${VIEW}/...`;
       el.style.background = '#b71c1c';
       throw new Error('Could not resolve tiles');
-    }
-
-    function computeSafeMinZoom(TILE){
-      const worldPxW = widthTiles * TILE;
-      const worldPxH = heightTiles * TILE;
-      const need = Math.max(worldPxW / innerWidth, worldPxH / innerHeight);
-      let z = 0; while ((1 << (-z)) < need && z > -12) z--; // how far we must zoom out for fit, as negative
-      return z;
     }
 
     (async () => {
       const { BASE, EXT, TILE } = await resolveSource();
 
-      const statusEl = document.getElementById('status');
-      const hud = document.getElementById('hud');
-      const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
-
-  const DynmapLayer = L.TileLayer.extend({
-    getTileUrl: function (coords) {
-      // 1) Convert Leaflet zoom to z0 tile grid
-      const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
-      const scaleZ0 = Math.pow(2, -zTile);       // z0 => 1, z=-3 => 8
-      const lx0 = Math.floor(coords.x * scaleZ0);
-      const ly0 = Math.floor(coords.y * scaleZ0);
-  
-      // 2) Map to file-space at z0
-      let fx = MIN_X + lx0;
-      let fy = MAX_Y - ly0;                       // flip Y (Dynmap rows top→bottom)
-  
-      // 3) If we’re zoomed out, hop to Dynmap’s coarse level z_-K and coarsen the indices
-      let levelDir = "";                          // "" for z0, "z_-K/" for K>0
-      if (zTile < 0) {
-        const K = -zTile;                         // how many extra zoom-outs
-        const step = 1 << K;                      // 2^K
-        fx = Math.floor(fx / step);
-        fy = Math.floor(fy / step);
-        levelDir = `z_-${K}/`;
-      }
-  
-      // 4) Reject outside bounds (still using the current level’s index space)
-      if (fx < Math.floor(MIN_X / (1 << Math.max(0, -zTile))) ||
-          fy < Math.floor(MIN_Y / (1 << Math.max(0, -zTile))) ||
-          fx > Math.floor(MAX_X / (1 << Math.max(0, -zTile))) ||
-          fy > Math.floor(MAX_Y / (1 << Math.max(0, -zTile)))) {
-        return BLANK;
-      }
-  
-      // 5) Bucket on the current level’s indices
-      const gx = group(fx), gy = group(fy);
-  
-      // 6) Build URL
-      return `${BASE}tiles/${WORLD}/${VIEW}/${levelDir}${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
-    }
-  });
-
-
+      // Leaflet map locked at zoom 0 (no tile pyramid)
       const map = L.map('map', {
         crs: L.CRS.Simple,
-        minZoom: 0,          // temp, we clamp right below
-        maxZoom: 2,          // you can zoom in 2 steps (scaled)
-        zoomSnap: 1,
-        wheelPxPerZoomLevel: 80,
-        updateWhenZooming: false,
-        zoomControl: true
+        zoomControl: false,
+        zoomSnap: 0, // we'll ignore Leaflet's zoom pipeline
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        touchZoom: false,
+        inertia: true, // normal panning ok
       });
 
-      // Compute a fit-based min zoom, then CLAMP to -EXTRA_OUT
-      const fitMin = computeSafeMinZoom(TILE);   // negative number (e.g. -2, -3)
-      const minAllowed = -EXTRA_OUT;            // you rendered 6 extra levels => min=-6
-      const finalMin = Math.max(minAllowed, fitMin - EXTRA_OUT); // never go below -6
-      map.setMinZoom(finalMin);
+      // Our tile layer always targets z0 tile grid (no zoom param)
+      const DynmapZ0 = L.TileLayer.extend({
+        getTileUrl: function (coords) {
+          // coords.x/y are the current z0 tile indices (because we won't change map zoom)
+          const fx = MIN_X + coords.x;
+          const fy = MAX_Y - coords.y; // flip Y
+          if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
+          const gx = group(fx), gy = group(fy);
+          return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
+        }
+      });
 
-      const layer = new DynmapLayer('', {
+      const layer = new DynmapZ0('', {
         tileSize: TILE,
         noWrap: true,
-        minNativeZoom: 0,   // native is z0; extra-outs are just scaled
-        maxNativeZoom: 0,
-        keepBuffer: 4
+        keepBuffer: 8, // keep a wider ring when we scale
+        updateWhenZooming: false,
+        updateWhenIdle: true
       }).addTo(map);
 
-      // Fit whole atlas
+      // world bounds & initial fit
       const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
       map.setMaxBounds(bounds);
       map.options.maxBoundsViscosity = 1.0;
-      map.fitBounds(L.latLngBounds(bounds).pad(0.12));
+      // Fit by setting an artificial pixel world and center
+      const startLatLngBounds = L.latLngBounds(bounds).pad(0.12);
+      map.fitBounds(startLatLngBounds);
 
-      // Quietly ignore missing tiles inside range
+      // mark panes to scale
+      const panes = [
+        map.getPane('tilePane'),
+        map.getPane('overlayPane'),
+        map.getPane('shadowPane')
+      ];
+      panes.forEach(p => p.classList.add('scaled'));
+
+      // ---- FAKE ZOOM STATE ----
+      let scale = 1;                // 1 = native; each wheel notch halves/doubles
+      const MIN_SCALE = 1 / 64;     // ~6 extra zoom-outs
+      const MAX_SCALE = 4;          // allow some zoom-in
+
+      function applyScale() {
+        const s = `scale(${scale})`;
+        panes.forEach(p => p.style.transform = s);
+        // keep the map panning feel consistent by adjusting tile loading margin
+        layer.options.keepBuffer = scale < 1 ? 12 : 8;
+      }
+
+      // intercept wheel to change *visual* scale (not Leaflet zoom)
+      map.getContainer().addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const dir = ev.deltaY > 0 ? -1 : 1; // down = zoom out
+        scale *= (dir > 0 ? 2 : 0.5);
+        if (scale < MIN_SCALE) scale = MIN_SCALE;
+        if (scale > MAX_SCALE) scale = MAX_SCALE;
+        applyScale();
+        status(`fake zoom: ×${scale.toFixed(3)} (using z0 tiles only)`, '#2e7d32');
+      }, { passive: false });
+
+      // HUD + status
+      const statusEl = document.getElementById('status');
+      const hud = document.getElementById('hud');
+      const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
       L.TileLayer.prototype.options.errorTileUrl = BLANK;
       layer.on('tileerror', e => console.warn('404 tile inside range:', e.tile.src));
 
-      // HUD: show continuous world X/Z derived from global z0 pixels
-      const PPB = TILE / BUCKET; // pixels per block at z0
+      // continuous coords (account for visual scale)
+      const PPB = TILE / BUCKET; // pixels/block at native scale
       function updateHUD(latlng){
-        const z  = map.getZoom();
-        const pz = map.project(latlng, z);
-        const scale = Math.pow(2, -z);
-        const px0 = pz.x * scale, py0 = pz.y * scale;
+        // get pixel point at Leaflet's fixed zoom (z0), then unscale
+        const p = map.project(latlng, 0); // z0 pixels
+        const px0 = p.x / scale;
+        const py0 = p.y / scale;
 
         const Xf = (px0 / PPB) + (MIN_X * BUCKET);
         const Zf = (py0 / PPB) + (MIN_Y * BUCKET);
@@ -213,21 +204,19 @@
 
         hud.innerHTML =
           `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>` +
-          `  | b/px≈${(Math.pow(2, -z)/PPB).toFixed(2)} @ z=${z}`;
+          `  | fake-zoom ×${scale.toFixed(3)}`;
         return { Xf, Zf, fx, fy, gx, gy };
       }
-
       map.on('mousemove', e => updateHUD(e.latlng));
       map.on('click', e => {
         const info = updateHUD(e.latlng);
         navigator.clipboard?.writeText(`${Math.floor(info.Xf)} ${Math.floor(info.Zf)}`);
-        const url = `${BASE}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
-        const msg = `copied coords: ${Math.floor(info.Xf)} ${Math.floor(info.Zf)}\n${url}`;
-        status(msg, '#2e7d32');
-        setTimeout(()=>status(`BASE ok • view=${VIEW} • .${EXT} • tile=${TILE}px • minZoom=${finalMin}`, '#2e7d32'), 1400);
+        const url = `${withSlash(R2_BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
+        status(`copied coords • ${Math.floor(info.Xf)} ${Math.floor(info.Zf)}\n${url}`, '#2e7d32');
       });
 
-      console.log('Resolved', { BASE, EXT, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y, fitMin, finalMin });
+      status('Ready. Use mouse wheel to fake-zoom (no extra pyramid needed).');
+      applyScale();
     })();
   </script>
 </body>
