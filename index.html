@@ -121,24 +121,44 @@
       const hud = document.getElementById('hud');
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
 
-      // Tile layer that normalizes any Leaflet zoom to the native z0 grid
-      const DynmapLayer = L.TileLayer.extend({
-        getTileUrl: function (coords) {
-          // Convert Leaflet zoom to z0 tile coords
-          const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
-          const scale = Math.pow(2, -zTile);        // z0 => 1, z=-3 => 8
-          const lx0   = Math.floor(coords.x * scale);
-          const ly0   = Math.floor(coords.y * scale);
+  const DynmapLayer = L.TileLayer.extend({
+    getTileUrl: function (coords) {
+      // 1) Convert Leaflet zoom to z0 tile grid
+      const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
+      const scaleZ0 = Math.pow(2, -zTile);       // z0 => 1, z=-3 => 8
+      const lx0 = Math.floor(coords.x * scaleZ0);
+      const ly0 = Math.floor(coords.y * scaleZ0);
+  
+      // 2) Map to file-space at z0
+      let fx = MIN_X + lx0;
+      let fy = MAX_Y - ly0;                       // flip Y (Dynmap rows top→bottom)
+  
+      // 3) If we’re zoomed out, hop to Dynmap’s coarse level z_-K and coarsen the indices
+      let levelDir = "";                          // "" for z0, "z_-K/" for K>0
+      if (zTile < 0) {
+        const K = -zTile;                         // how many extra zoom-outs
+        const step = 1 << K;                      // 2^K
+        fx = Math.floor(fx / step);
+        fy = Math.floor(fy / step);
+        levelDir = `z_-${K}/`;
+      }
+  
+      // 4) Reject outside bounds (still using the current level’s index space)
+      if (fx < Math.floor(MIN_X / (1 << Math.max(0, -zTile))) ||
+          fy < Math.floor(MIN_Y / (1 << Math.max(0, -zTile))) ||
+          fx > Math.floor(MAX_X / (1 << Math.max(0, -zTile))) ||
+          fy > Math.floor(MAX_Y / (1 << Math.max(0, -zTile)))) {
+        return BLANK;
+      }
+  
+      // 5) Bucket on the current level’s indices
+      const gx = group(fx), gy = group(fy);
+  
+      // 6) Build URL
+      return `${BASE}tiles/${WORLD}/${VIEW}/${levelDir}${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
+    }
+  });
 
-          const fx = MIN_X + lx0;
-          const fy = MAX_Y - ly0;                   // flip Y to match file grid
-
-          if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
-
-          const gx = group(fx), gy = group(fy);
-          return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
-        }
-      });
 
       const map = L.map('map', {
         crs: L.CRS.Simple,
