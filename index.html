@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map — R2 (scaled z0, no blackout)</title>
+  <title>DayZ World Map — R2 (z0 clamped, no blackout)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -24,7 +24,7 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">R2 • z0-normalized • extra-out=6 • view:<span id="viewname">t</span></div>
+  <div id="badge">R2 • z0-clamped • extra-out=6 • view:<span id="viewname">t</span></div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
@@ -33,7 +33,7 @@
     // ===== config =====
     const WORLD   = "world";
     const BUCKET  = 32;                // blocks per tile edge (Dynmap)
-    const VERSION = "r2-z0norm-v3";
+    const VERSION = "r2-z0clamp-v1";
     const R2_BASE = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
 
     // switch sets: t (iso 30° hires), flat, ct
@@ -105,31 +105,27 @@
     (async () => {
       const { BASE, EXT, TILE } = await resolveSource();
 
-      // Leaflet map USING real zoom (fractional + negative); we normalize requests to z0.
       const map = L.map('map', {
         crs: L.CRS.Simple,
-        minZoom: -6,                // allow 6 zoom-outs without a pyramid
-        maxZoom: 2,                 // a couple zoom-ins are fine
-        zoomSnap: 0,                // fractional zoom allowed; Leaflet will scale tiles
-        zoomDelta: 0.5,             // wheel step feel
+        minZoom: -6,           // allow 6 zoom-outs
+        maxZoom: 2,
+        zoomSnap: 1,           // << avoid fractional negatives (the touchy case)
         wheelPxPerZoomLevel: 120,
         updateWhenZooming: false,
         zoomControl: true
       });
 
-      // Tile layer that ALWAYS reads from z0 grid and lets Leaflet scale it
+      // Whole atlas bounds in z0 pixels
+      const z0Bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
+      const latLngBounds = L.latLngBounds(z0Bounds);
+
+      // Tile layer that ALWAYS reads from z0 grid and lets Leaflet scale it.
       const Z0Layer = L.TileLayer.extend({
         getTileUrl: function (coords) {
-          // Normalize current zoom to z0 indices
-          // Leaflet’s tile coords are based on the *current* zoom.
-          // Scale them by 2^-z to land on the z0 grid.
-          const z = this._tileZoom ?? map.getZoom() ?? 0;
-          const scale = Math.pow(2, -z); // z=0→1, z=-3→8
-          const lx0 = Math.floor(coords.x * scale);
-          const ly0 = Math.floor(coords.y * scale);
-
-          const fx = MIN_X + lx0;
-          const fy = MAX_Y - ly0;   // flip Y to your file grid
+          // Because we clamp native zoom to 0 (see options), Leaflet computes coords at z0.
+          // So coords.x/coords.y are already z0 indices, no extra math needed.
+          const fx = MIN_X + coords.x;
+          const fy = MAX_Y - coords.y; // flip Y to your file grid
 
           if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
 
@@ -140,35 +136,31 @@
 
       const layer = new Z0Layer('', {
         tileSize: TILE,
-        minNativeZoom: 0,
-        maxNativeZoom: 0,
+        minNativeZoom: 0,   // << clamp the layer’s native zoom to 0
+        maxNativeZoom: 0,   // << so _tileZoom stays 0 even when map zoom is negative
         noWrap: true,
-        keepBuffer: 6,           // a little wider ring for smoother zoom-out
+        continuousWorld: true,
+        bounds: latLngBounds, // << tell Leaflet where tiles exist
+        keepBuffer: 6,
         updateWhenZooming: false,
-        updateWhenIdle: true
+        updateWhenIdle: true,
+        errorTileUrl: BLANK
       }).addTo(map);
 
-      // Whole atlas bounds in z0 pixels
-      const bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
-      map.setMaxBounds(bounds);
+      map.setMaxBounds(latLngBounds);
       map.options.maxBoundsViscosity = 1.0;
-      map.fitBounds(L.latLngBounds(bounds).pad(0.12));
+      map.fitBounds(latLngBounds.pad(0.12));
 
-      // Silent missing tiles
-      const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
-      L.TileLayer.prototype.options.errorTileUrl = BLANK;
-      layer.on('tileerror', e => console.warn('404 inside range:', e.tile.src));
-
-      // HUD: compute X/Z correctly at any zoom (Leaflet scales, we just read its projection)
+      // HUD
       const PPB = TILE / BUCKET; // pixels per block at z0
       const hud = document.getElementById('hud');
       const statusEl = document.getElementById('status');
       const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
 
       function updateHUD(latlng){
-        // Project at *current* zoom, then normalize back to z0 pixels by 2^-z
+        // project at current zoom, normalize to z0 pixels: multiply by 2^-z
         const z = map.getZoom();
-        const p = map.project(latlng, z); // pixels at current zoom
+        const p = map.project(latlng, z);
         const px0 = p.x * Math.pow(2, -z);
         const py0 = p.y * Math.pow(2, -z);
 
