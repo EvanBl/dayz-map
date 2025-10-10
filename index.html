@@ -21,32 +21,32 @@
     #hud    { bottom:10px; background:rgba(0,0,0,.6); font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     #hud b  { color:#8bc34a; }
   </style>
-  
 </head>
 <body>
   <div id="map"></div>
-  <div id="badge">R2 • Leaflet • extrazoomout=6</div>
+  <div id="badge">R2 • Leaflet • extra-out=6 • view:<span id="viewname">t</span></div>
   <div id="status">booting…</div>
   <div id="hud">move mouse…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ====== tweakables ======
-    const WORLD   = "world";     // folder after /tiles/
-    const VIEW    = "t";      // "flat", "ct", or "surface" — match your rendered set
-    const BUCKET  = 32;          // blocks per tile edge (Dynmap default)
-    const VERSION = "r2-v1";     // cache-buster for tile URLs
-
-    // Your public R2 base:
+    // ========= CONFIG =========
+    const WORLD   = "world";       // folder after /tiles/
+    const BUCKET  = 32;            // blocks per tile edge
+    const EXTRA_OUT = 6;           // you rendered 6 extra zoom-outs
+    const VERSION = "r2-v2";       // cache-buster
     const R2_BASE = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
 
-    // Visible world bounds (in *blocks*), then converted to file-tiles below.
-    // Use what you rendered in Dynmap (these matched your earlier screenshots).
+    // Choose view: default 't' (your 30° iso hires). Override with ?view=flat|ct|t
+    const qp = new URLSearchParams(location.search);
+    const VIEW = (qp.get("view") || "t").trim();
+    document.getElementById('viewname').textContent = VIEW;
+
+    // Visible world bounds (in blocks) — from your dynmap config
     const X_MIN_BLK = -2640, X_MAX_BLK = 2720;
     const Z_MIN_BLK = -2720, Z_MAX_BLK = 5536;
 
     // A known-good file tile inside the render area (used to probe format/size)
-    // If unsure, (-10,-33) is often safe given your ranges; adjust if needed.
     const START_X = -10, START_Y = -33;
 
     // ====== derived constants ======
@@ -101,7 +101,7 @@
         }
       }
       const el=document.getElementById('status');
-      el.textContent = `No start tile found at:\n${base}${startPath('png')}\nMake sure your bucket is public and the path uses /tiles/${WORLD}/${VIEW}/...`;
+      el.textContent = `No start tile found at:\n${base}${startPath('png')}\nCheck bucket access and path /tiles/${WORLD}/${VIEW}/...`;
       el.style.background = '#b71c1c';
       throw new Error('Could not resolve tiles');
     }
@@ -110,7 +110,8 @@
       const worldPxW = widthTiles * TILE;
       const worldPxH = heightTiles * TILE;
       const need = Math.max(worldPxW / innerWidth, worldPxH / innerHeight);
-      let z = 0; while ((1 << (-z)) < need && z > -12) z--; return z;
+      let z = 0; while ((1 << (-z)) < need && z > -12) z--; // how far we must zoom out for fit, as negative
+      return z;
     }
 
     (async () => {
@@ -123,6 +124,7 @@
       // Tile layer that normalizes any Leaflet zoom to the native z0 grid
       const DynmapLayer = L.TileLayer.extend({
         getTileUrl: function (coords) {
+          // Convert Leaflet zoom to z0 tile coords
           const zTile = (coords && typeof coords.z === 'number') ? coords.z : (this._tileZoom ?? this._map.getZoom() ?? 0);
           const scale = Math.pow(2, -zTile);        // z0 => 1, z=-3 => 8
           const lx0   = Math.floor(coords.x * scale);
@@ -140,20 +142,24 @@
 
       const map = L.map('map', {
         crs: L.CRS.Simple,
-        minZoom: 0, maxZoom: 6,
-        zoomSnap: 1, wheelPxPerZoomLevel: 80,
+        minZoom: 0,          // temp, we clamp right below
+        maxZoom: 2,          // you can zoom in 2 steps (scaled)
+        zoomSnap: 1,
+        wheelPxPerZoomLevel: 80,
         updateWhenZooming: false,
         zoomControl: true
       });
 
-      // Deep zoom-out: match Dynmap extrazoomout feel
-      const EXTRA_OUT = 6;
-      map.setMinZoom(computeSafeMinZoom(TILE) - EXTRA_OUT);
+      // Compute a fit-based min zoom, then CLAMP to -EXTRA_OUT
+      const fitMin = computeSafeMinZoom(TILE);   // negative number (e.g. -2, -3)
+      const minAllowed = -EXTRA_OUT;            // you rendered 6 extra levels => min=-6
+      const finalMin = Math.max(minAllowed, fitMin - EXTRA_OUT); // never go below -6
+      map.setMinZoom(finalMin);
 
       const layer = new DynmapLayer('', {
         tileSize: TILE,
         noWrap: true,
-        minNativeZoom: 0,
+        minNativeZoom: 0,   // native is z0; extra-outs are just scaled
         maxNativeZoom: 0,
         keepBuffer: 4
       }).addTo(map);
@@ -198,10 +204,10 @@
         const url = `${BASE}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
         const msg = `copied coords: ${Math.floor(info.Xf)} ${Math.floor(info.Zf)}\n${url}`;
         status(msg, '#2e7d32');
-        setTimeout(()=>status(`BASE ok • view=${VIEW} • .${EXT} • tile=${TILE}px`, '#2e7d32'), 1400);
+        setTimeout(()=>status(`BASE ok • view=${VIEW} • .${EXT} • tile=${TILE}px • minZoom=${finalMin}`, '#2e7d32'), 1400);
       });
 
-      console.log('Resolved', { BASE, EXT, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
+      console.log('Resolved', { BASE, EXT, VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y, fitMin, finalMin });
     })();
   </script>
 </body>
