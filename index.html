@@ -2,193 +2,183 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <title>DayZ World Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DayZ World Map — R2 (z0 clamped, no blackout)</title>
+
+  <!-- hard disable caching while testing -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+
   <style>
-    html, body, #map { height:100%; margin:0; padding:0; }
-    .leaflet-container { background:#0b0f14; }
-    #badge, #status, #hud {
-      position:fixed; left:10px; z-index:9999;
-      padding:6px 10px; border-radius:8px; color:#fff; font:14px system-ui, sans-serif;
-      pointer-events:none;
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #0b0f14;
     }
-    #badge  { top:10px; background:#2e7d32; }
-    #status { top:44px; background:#1565c0; max-width:80vw; white-space:pre-wrap; word-break:break-all; }
-    #hud    { bottom:10px; background:rgba(0,0,0,.6); font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    #hud b  { color:#8bc34a; }
+
+    #hud {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      z-index: 9999;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: rgba(0,0,0,.6);
+      color: #fff;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      pointer-events: none;
+    }
+
+    #hud b { color: #8bc34a; }
   </style>
 </head>
 <body>
-  <div id="map"></div>
-  <div id="badge">R2 • z0-clamped • extra-out=6 • view:<span id="viewname">t</span></div>
-  <div id="status">booting…</div>
-  <div id="hud">move mouse…</div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script>
-    // ===== config =====
-    const WORLD   = "world";
-    const BUCKET  = 32;                // blocks per tile edge (Dynmap)
-    const VERSION = "r2-z0clamp-v1";
-    const R2_BASE = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
+<div id="map"></div>
+<div id="hud">loading…</div>
 
-    // switch sets: t (iso 30° hires), flat, ct
-    const qp = new URLSearchParams(location.search);
-    const VIEW = (qp.get("view") || "t").trim();
-    document.getElementById('viewname').textContent = VIEW;
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  crossorigin=""
+></script>
 
-    // your dynmap bounds (in blocks)
-    const X_MIN_BLK = -2640, X_MAX_BLK = 2720;
-    const Z_MIN_BLK = -2720, Z_MAX_BLK = 5536;
+<script>
+/* ================= CONFIG ================= */
 
-    // derived file-tile bounds at z0
-    const MIN_X = Math.floor(X_MIN_BLK / BUCKET);
-    const MAX_X = Math.ceil (X_MAX_BLK / BUCKET) - 1;
-    const MIN_Y = Math.floor(Z_MIN_BLK / BUCKET);
-    const MAX_Y = Math.ceil (Z_MAX_BLK / BUCKET) - 1;
+// Dynmap world + map name (MUST match Dynmap `name:`)
+const WORLD = "world";
+const MAP   = "iso_NE_30_hires";
 
-    const widthTiles  = MAX_X - MIN_X + 1;
-    const heightTiles = MAX_Y - MIN_Y + 1;
+// Cloudflare R2 public base URL (must end with /)
+const BASE_URL = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
 
-    const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+// Dynmap constants
+const BLOCKS_PER_TILE = 128;   // z0 blocks per tile (Dynmap default)
+const TILES_PER_DIR   = 32;    // tiles per bucket folder
 
-    // helpers
-    function floorDiv(n, d){ if(n>=0) return Math.floor(n/d); const q=Math.trunc(n/d); return (q*d===n)?q:q-1; }
-    const group     = (n) => floorDiv(n, BUCKET);
-    const withSlash = (s) => s.endsWith('/') ? s : s + '/';
+// Your Dynmap visibility limits (blocks)
+const X_MIN = -2640;
+const X_MAX =  2720;
+const Z_MIN = -2720;
+const Z_MAX =  5536;
 
-    // probe one inside tile to detect ext and TILE px
-    const START_X = -10, START_Y = -33;
-    const startFolder = `${group(START_X)}_${group(START_Y)}`;
-    const startPath   = (ext) => `tiles/${WORLD}/${VIEW}/${startFolder}/${START_X}_${START_Y}.${ext}`;
+// blank tile
+const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
-    function probe(url, timeoutMs=6000){
-      return new Promise((resolve)=>{
-        const img = new Image();
-        const t = setTimeout(()=>{img.src=''; resolve(false)}, timeoutMs);
-        img.onload  = ()=>{ clearTimeout(t); resolve(true); };
-        img.onerror = ()=>{ clearTimeout(t); resolve(false); };
-        img.src = url + "?probe=" + VERSION;
-      });
-    }
-    async function detectTileSize(url){
-      return new Promise((resolve)=>{
-        const img=new Image();
-        img.onload=()=>resolve(img.naturalWidth||128);
-        img.onerror=()=>resolve(128);
-        img.src=url + "?size=" + VERSION;
-      });
-    }
-    async function resolveSource(){
-      const status = (m,c='#1565c0')=>{const el=document.getElementById('status'); el.textContent=m; el.style.background=c;};
-      const base = withSlash(R2_BASE);
-      for (const ext of ['png','jpg','jpeg']){
-        const url = base + startPath(ext);
-        status(`probing:\n${url}`);
-        // eslint-disable-next-line no-await-in-loop
-        if (await probe(url)){
-          const TILE = await detectTileSize(url);
-          status(`OK → base: ${base}\nview: ${VIEW} • ext: .${ext} • tile: ${TILE}px`, '#2e7d32');
-          return { BASE: base, EXT: ext, TILE };
-        }
-      }
-      const el=document.getElementById('status');
-      el.textContent = `No start tile at:\n${base}${startPath('png')}\nCheck public access and /tiles/${WORLD}/${VIEW}/...`;
-      el.style.background = '#b71c1c';
-      throw new Error('Could not resolve tiles');
-    }
+/* ================= HELPERS ================= */
 
-    (async () => {
-      const { BASE, EXT, TILE } = await resolveSource();
+function floorDiv(n, d) {
+  if (n >= 0) return Math.floor(n / d);
+  const q = Math.trunc(n / d);
+  return (q * d === n) ? q : q - 1;
+}
 
-      const map = L.map('map', {
-        crs: L.CRS.Simple,
-        minZoom: -6,           // allow 6 zoom-outs
-        maxZoom: 2,
-        zoomSnap: 1,           // << avoid fractional negatives (the touchy case)
-        wheelPxPerZoomLevel: 120,
-        updateWhenZooming: false,
-        zoomControl: true
-      });
+// block → tile index
+const tileX = (x) => floorDiv(x, BLOCKS_PER_TILE);
+const tileY = (z) => floorDiv(z, BLOCKS_PER_TILE);
 
-      // Whole atlas bounds in z0 pixels
-      const z0Bounds = [[-(heightTiles*TILE), 0], [0, widthTiles*TILE]];
-      const latLngBounds = L.latLngBounds(z0Bounds);
+// tile → bucket folder
+const bucket = (t) => floorDiv(t, TILES_PER_DIR);
 
-      // Tile layer that ALWAYS reads from z0 grid and lets Leaflet scale it.
-      const Z0Layer = L.TileLayer.extend({
-        getTileUrl: function (coords) {
-          // Because we clamp native zoom to 0 (see options), Leaflet computes coords at z0.
-          // So coords.x/coords.y are already z0 indices, no extra math needed.
-          const fx = MIN_X + coords.x;
-          const fy = MAX_Y - coords.y; // flip Y to your file grid
+/* ================= DERIVED BOUNDS ================= */
 
-          if (fx < MIN_X || fx > MAX_X || fy < MIN_Y || fy > MAX_Y) return BLANK;
+const MIN_TX = tileX(X_MIN);
+const MAX_TX = tileX(X_MAX - 1);
+const MIN_TY = tileY(Z_MIN);
+const MAX_TY = tileY(Z_MAX - 1);
 
-          const gx = group(fx), gy = group(fy);
-          return `${BASE}tiles/${WORLD}/${VIEW}/${gx}_${gy}/${fx}_${fy}.${EXT}?${VERSION}`;
-        }
-      });
+const TILES_W = MAX_TX - MIN_TX + 1;
+const TILES_H = MAX_TY - MIN_TY + 1;
 
-      const layer = new Z0Layer('', {
-        tileSize: TILE,
-        minNativeZoom: 0,   // << clamp the layer’s native zoom to 0
-        maxNativeZoom: 0,   // << so _tileZoom stays 0 even when map zoom is negative
-        noWrap: true,
-        continuousWorld: true,
-        bounds: latLngBounds, // << tell Leaflet where tiles exist
-        keepBuffer: 6,
-        updateWhenZooming: false,
-        updateWhenIdle: true,
-        errorTileUrl: BLANK
-      }).addTo(map);
+/* ================= LEAFLET MAP ================= */
 
-      map.setMaxBounds(latLngBounds);
-      map.options.maxBoundsViscosity = 1.0;
-      map.fitBounds(latLngBounds.pad(0.12));
+const map = L.map("map", {
+  crs: L.CRS.Simple,
+  minZoom: -6,
+  maxZoom: 2,
+  zoomSnap: 1,
+  zoomControl: true,
+  updateWhenZooming: false
+});
 
-      // HUD
-      const PPB = TILE / BUCKET; // pixels per block at z0
-      const hud = document.getElementById('hud');
-      const statusEl = document.getElementById('status');
-      const status = (msg, color='#1565c0') => { statusEl.textContent = msg; statusEl.style.background = color; };
+// bounds in pixels at z0
+const TILE_PX = 128; // dynmap tile pixel size
+const bounds = L.latLngBounds(
+  [-(TILES_H * TILE_PX), 0],
+  [0, (TILES_W * TILE_PX)]
+);
 
-      function updateHUD(latlng){
-        // project at current zoom, normalize to z0 pixels: multiply by 2^-z
-        const z = map.getZoom();
-        const p = map.project(latlng, z);
-        const px0 = p.x * Math.pow(2, -z);
-        const py0 = p.y * Math.pow(2, -z);
+// custom tile layer
+const DynmapLayer = L.TileLayer.extend({
+  getTileUrl: function (coords) {
+    const tx = MIN_TX + coords.x;
+    const ty = MAX_TY - coords.y; // flip Y for dynmap grid
 
-        const Xf = (px0 / PPB) + (MIN_X * BUCKET);
-        const Zf = (py0 / PPB) + (MIN_Y * BUCKET);
+    if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY)
+      return BLANK;
 
-        const lx = Math.floor(px0 / TILE);
-        const ly = Math.floor(py0 / TILE);
-        const fx = MIN_X + lx;
-        const fy = MAX_Y - ly;
-        const gx = group(fx), gy = group(fy);
+    const bx = bucket(tx);
+    const by = bucket(ty);
 
-        hud.innerHTML =
-          `X:<b>${Xf.toFixed(1)}</b>  Z:<b>${Zf.toFixed(1)}</b>  |  tile:<b>${fx}_${fy}</b>  bucket:<b>${gx}_${gy}</b>  | z=${z}`;
-        return { Xf, Zf, fx, fy, gx, gy };
-      }
+    return (
+      BASE_URL +
+      `tiles/${WORLD}/${MAP}/${bx}_${by}/${tx}_${ty}.png`
+    );
+  }
+});
 
-      map.on('mousemove', e => updateHUD(e.latlng));
-      map.on('zoom', () => status(`z=${map.getZoom()} (scaled z0 tiles)`, '#2e7d32'));
-      map.on('click', e => {
-        const info = updateHUD(e.latlng);
-        navigator.clipboard?.writeText(`${Math.floor(info.Xf)} ${Math.floor(info.Zf)}`);
-        const url = `${withSlash(R2_BASE)}tiles/${WORLD}/${VIEW}/${info.gx}_${info.gy}/${info.fx}_${info.fy}.${EXT}`;
-        status(`copied • ${Math.floor(info.Xf)} ${Math.floor(info.Zf)}\n${url}`, '#2e7d32');
-      });
+new DynmapLayer("", {
+  tileSize: TILE_PX,
+  minNativeZoom: 0,
+  maxNativeZoom: 0,
+  noWrap: true,
+  bounds: bounds,
+  keepBuffer: 6,
+  errorTileUrl: BLANK
+}).addTo(map);
 
-      console.log('Ready', { VIEW, TILE, MIN_X, MAX_X, MIN_Y, MAX_Y });
-    })();
-  </script>
+map.setMaxBounds(bounds);
+map.options.maxBoundsViscosity = 1.0;
+map.fitBounds(bounds.pad(0.12));
+
+/* ================= HUD ================= */
+
+const hud = document.getElementById("hud");
+const PX_PER_BLOCK = TILE_PX / BLOCKS_PER_TILE;
+
+map.on("mousemove", (e) => {
+  const z = map.getZoom();
+  const p = map.project(e.latlng, z);
+
+  // normalize to z0 pixels
+  const px0 = p.x * Math.pow(2, -z);
+  const py0 = p.y * Math.pow(2, -z);
+
+  const X = (px0 / PX_PER_BLOCK) + (MIN_TX * BLOCKS_PER_TILE);
+  const Z = (py0 / PX_PER_BLOCK) + (MIN_TY * BLOCKS_PER_TILE);
+
+  const tx = MIN_TX + Math.floor(px0 / TILE_PX);
+  const ty = MAX_TY - Math.floor(py0 / TILE_PX);
+
+  hud.innerHTML =
+    `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
+    ` | tile:<b>${tx}_${ty}</b>` +
+    ` | z=${z}`;
+});
+
+console.log("Dynmap viewer ready", {
+  WORLD, MAP,
+  MIN_TX, MAX_TX, MIN_TY, MAX_TY
+});
+</script>
+
 </body>
 </html>
