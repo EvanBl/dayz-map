@@ -55,7 +55,7 @@
   const X_MIN = -2640, X_MAX = 2720;
   const Z_MIN = -2720, Z_MAX = 5536;
 
-  // “we have 6 zoom-outs” => Leaflet minZoom -6
+  // "we have 6 zoom-outs" => Leaflet minZoom -6
   const MIN_ZOOM   = -6;
   const MAX_ZOOM   = 2;
   const START_ZOOM = -6;
@@ -148,21 +148,17 @@
     });
 
     /**
-     * FIX: pin the *tile grid zoom* to 0
-     * so Leaflet never changes coords.x/coords.y to the negative-zoom grid.
-     *
-     * Leaflet will still visually scale the layer when map zoom < 0,
-     * but the layer will keep requesting z0 tiles (your real dynmap files).
+     * Multi-zoom layer: at ANY zoom level, request the SAME z0 tiles
+     * but let Leaflet scale/position them naturally
      */
-    const Z0PinnedLayer = L.TileLayer.extend({
-      _setView: function (center, zoom, noPrune, noUpdate) {
-        // Force the layer to always operate at zoom 0 internally
-        return L.TileLayer.prototype._setView.call(this, center, 0, noPrune, noUpdate);
-      },
+    const MultiZoomLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
-        // coords.x/coords.y are now ALWAYS z0 indices
-        const tx = MIN_TX + coords.x;
-        const ty = MAX_TY - coords.y; // flip Y
+        const z = this._tileZoom; // current map zoom
+        
+        // Convert current zoom coords back to z0 tile indices
+        const scale = Math.pow(2, z);
+        const tx = MIN_TX + Math.floor(coords.x / scale);
+        const ty = MAX_TY - Math.floor(coords.y / scale);
 
         if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
 
@@ -171,11 +167,10 @@
       }
     });
 
-    new Z0PinnedLayer("", {
+    new MultiZoomLayer("", {
       tileSize: TILE_PX,
       noWrap: true,
       keepBuffer: 10,
-      updateWhenZooming: false,
       updateWhenIdle: true,
       errorTileUrl: BLANK
     }).addTo(map);
