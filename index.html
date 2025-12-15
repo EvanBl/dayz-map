@@ -44,25 +44,26 @@
   /* ================= CONFIG ================= */
 
   const WORLD = "world";
-  const VIEW  = "ne"; // dynmap prefix
+  const VIEW  = "ne"; // dynmap prefix (your map config: prefix: ne)
   const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
   // your dynmap setup
-  const BLOCKS_PER_TILE = 32;
-  const TILES_PER_DIR   = 32;
+  const BLOCKS_PER_TILE = 32;   // your z0 tiles are 32x32 blocks
+  const TILES_PER_DIR   = 32;   // bucket folders are 32 tiles wide/tall
 
-  // rendered bounds (blocks)
+  // rendered bounds (blocks) - dynmap visibilitylimits
   const X_MIN = -2640, X_MAX = 2720;
   const Z_MIN = -2720, Z_MAX = 5536;
 
   // “we have 6 zoom-outs” => Leaflet minZoom -6
-  const MIN_ZOOM   = -6;
-  const MAX_ZOOM   = 2;
-  const START_ZOOM = -6;
+  const MIN_ZOOM   = -6;  // zoomed OUT 6 steps
+  const MAX_ZOOM   = 2;   // allow zooming IN a bit
+  const START_ZOOM = -6;  // start fully zoomed out
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
   /* ================= HELPERS ================= */
+
   function floorDiv(n, d){
     if(n >= 0) return Math.floor(n/d);
     const q = Math.trunc(n/d);
@@ -75,13 +76,20 @@
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
   const BASE = withSlash(BASE_URL);
 
-  // probe a likely tile
+  // probe a likely tile near origin-ish
   const PROBE_TX = tileX(-16);
   const PROBE_TY = tileY(-16);
 
-  function tilePath(ext, tx, ty){
-    const bx = bucket(tx), by = bucket(ty);
-    return `tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${ext}`;
+  function tilePath(ext, tx, ty, z){ // z is leaflet tile zoom, can be negative
+    const zoomOut = Math.max(0, -z);
+    const prefix = zoomOut === 0 ? "" : ("z".repeat(zoomOut) + "_");
+
+    const scale = 1 << zoomOut;              // 1,2,4,8...
+    const txz = tx - (tx % scale);           // snap to scale grid
+    const tyz = ty - (ty % scale);
+
+    const bx = bucket(txz), by = bucket(tyz);
+    return `tiles/${WORLD}/${VIEW}/${bx}_${by}/${prefix}${txz}_${tyz}.${ext}`;
   }
 
   function probe(url, timeoutMs=6000){
@@ -98,8 +106,9 @@
     const statusEl = document.getElementById("status");
     const status = (m, color="#1565c0") => { statusEl.textContent = m; statusEl.style.background = color; };
 
+    // Detect extension + TILE_PX from z0
     for (const ext of ["jpg","png","jpeg"]) {
-      const url = BASE + tilePath(ext, PROBE_TX, PROBE_TY);
+      const url = BASE + `tiles/${WORLD}/${VIEW}/${bucket(PROBE_TX)}_${bucket(PROBE_TY)}/${PROBE_TX}_${PROBE_TY}.${ext}`;
       status(`probing:\n${url}`);
 
       // eslint-disable-next-line no-await-in-loop
@@ -116,7 +125,7 @@
       }
     }
 
-    status(`FAILED\nNo tiles found.\nCheck:\n- public read\n- /tiles/${WORLD}/${VIEW}/...\n- upload finished`, "#b71c1c");
+    status(`FAILED\nNo z0 tiles found.\nCheck:\n- public read\n- /tiles/${WORLD}/${VIEW}/...\n- upload finished`, "#b71c1c");
     throw new Error("No tiles found");
   }
 
@@ -132,7 +141,7 @@
     const W = (MAX_TX - MIN_TX + 1);
     const H = (MAX_TY - MIN_TY + 1);
 
-    // z0 pixel bounds (render rectangle)
+    // z0 pixel bounds for the rendered rectangle
     const z0Bounds = L.latLngBounds(
       [-(H * TILE_PX), 0],
       [0, (W * TILE_PX)]
@@ -147,32 +156,41 @@
       zoomControl: true
     });
 
-    /**
-     * FIX: pin the *tile grid zoom* to 0
-     * so Leaflet never changes coords.x/coords.y to the negative-zoom grid.
-     *
-     * Leaflet will still visually scale the layer when map zoom < 0,
-     * but the layer will keep requesting z0 tiles (your real dynmap files).
-     */
-    const Z0PinnedLayer = L.TileLayer.extend({
-      _setView: function (center, zoom, noPrune, noUpdate) {
-        // Force the layer to always operate at zoom 0 internally
-        return L.TileLayer.prototype._setView.call(this, center, 0, noPrune, noUpdate);
-      },
+    // NOTE: we intentionally do NOT setMaxBounds here,
+    // so you can pan freely without hitting a hard clamp.
+
+    const DynZoomLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
-        // coords.x/coords.y are now ALWAYS z0 indices
-        const tx = MIN_TX + coords.x;
-        const ty = MAX_TY - coords.y; // flip Y
+        // Leaflet tile zoom can be negative. We map it to dynmap zoomouts.
+        const z = coords.z;
 
-        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
+        const zoomOut = Math.max(0, -z); // 0..6
+        const scale = 1 << zoomOut;      // 1,2,4,8,16,32,64
 
+        // coords.x/y are in the tile grid for that zoom.
+        // Convert to z0-tile indices by multiplying by scale.
+        const tx0 = MIN_TX + (coords.x * scale);
+        const ty0 = MAX_TY - (coords.y * scale); // flip Y
+
+        // If out of rendered rectangle, show blank
+        if (tx0 < MIN_TX || tx0 > MAX_TX || ty0 < MIN_TY || ty0 > MAX_TY) return BLANK;
+
+        // Snap to dynmap’s expected grid at this zoomout level
+        const tx = tx0 - (tx0 % scale);
+        const ty = ty0 - (ty0 % scale);
+
+        const prefix = zoomOut === 0 ? "" : ("z".repeat(zoomOut) + "_");
         const bx = bucket(tx), by = bucket(ty);
-        return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
+
+        return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${prefix}${tx}_${ty}.${EXT}?v=1`;
       }
     });
 
-    new Z0PinnedLayer("", {
+    const layer = new DynZoomLayer("", {
       tileSize: TILE_PX,
+      // Allow Leaflet to request negative z tiles; we map those to z_/zz_/etc
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
       noWrap: true,
       keepBuffer: 10,
       updateWhenZooming: false,
@@ -180,18 +198,21 @@
       errorTileUrl: BLANK
     }).addTo(map);
 
-    // Center on the rendered rectangle and START at 6 zoom-outs (-6)
+    // Start centered on the render rectangle, at full zoom-out (-6)
     map.fitBounds(z0Bounds.pad(0.12));
     map.setZoom(START_ZOOM);
 
-    // HUD
+    // HUD showing block coords + dynmap zoomout prefix
     const hud = document.getElementById("hud");
     const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
     function updateHUD(latlng){
       const z = map.getZoom();
       const zoomOut = Math.max(0, -z);
+      const scale = 1 << zoomOut;
+      const prefix = zoomOut === 0 ? "(z0)" : ("(" + "z".repeat(zoomOut) + "_… )");
 
+      // Convert mouse position to z0 pixels for stable block math
       const p = map.project(latlng, z);
       const px0 = p.x * Math.pow(2, -z);
       const py0 = p.y * Math.pow(2, -z);
@@ -199,13 +220,16 @@
       const X = (px0 / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
       const Z = (py0 / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
 
-      const tx = MIN_TX + Math.floor(px0 / TILE_PX);
-      const ty = MAX_TY - Math.floor(py0 / TILE_PX);
+      const tx0 = MIN_TX + Math.floor(px0 / TILE_PX);
+      const ty0 = MAX_TY - Math.floor(py0 / TILE_PX);
+
+      const tx = tx0 - (tx0 % scale);
+      const ty = ty0 - (ty0 % scale);
 
       hud.innerHTML =
         `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
-        ` | tile:<b>${tx}_${ty}</b>` +
-        ` | zoomOut:<b>${zoomOut}</b> (leaflet z=${z})`;
+        ` | z=${z} zoomOut:<b>${zoomOut}</b> ${prefix}` +
+        ` | tile:<b>${tx}_${ty}</b> (scale ${scale}x)`;
 
       return { X, Z };
     }
@@ -216,7 +240,7 @@
       navigator.clipboard?.writeText(`${Math.floor(X)} ${Math.floor(Z)}`);
     });
 
-    console.log("Viewer ready", { WORLD, VIEW, EXT, TILE_PX });
+    console.log("Viewer ready", { WORLD, VIEW, EXT, TILE_PX, MIN_TX, MAX_TX, MIN_TY, MAX_TY });
   })();
   </script>
 </body>
