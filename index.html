@@ -5,180 +5,205 @@
   <title>DayZ World Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- hard disable caching while testing -->
+  <!-- disable caching while testing -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
-
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
-    html, body, #map {
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      background: #0b0f14;
-    }
+    html, body, #map { height:100%; margin:0; padding:0; }
+    .leaflet-container { background:#0b0f14; }
 
-    #hud {
+    #hud, #status {
       position: fixed;
-      bottom: 10px;
       left: 10px;
       z-index: 9999;
       padding: 6px 10px;
       border-radius: 8px;
-      background: rgba(0,0,0,.6);
       color: #fff;
       font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       pointer-events: none;
+      background: rgba(0,0,0,.6);
+      max-width: 85vw;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
-
-    #hud b { color: #8bc34a; }
+    #status { top: 10px; font: 14px system-ui, sans-serif; background:#1565c0; }
+    #hud { bottom: 10px; }
+    #hud b { color:#8bc34a; }
   </style>
 </head>
 <body>
+  <div id="map"></div>
+  <div id="status">booting…</div>
+  <div id="hud">loading…</div>
 
-<div id="map"></div>
-<div id="hud">loading…</div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+  /* ================= CONFIG ================= */
 
-<script
-  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  crossorigin=""
-></script>
+  // Your Dynmap world folder under /tiles/
+  const WORLD = "world";
 
-<script>
-/* ================= CONFIG ================= */
+  // IMPORTANT: this is the Dynmap MAP PREFIX (your config: prefix: ne)
+  // So tiles live under: tiles/world/ne/...
+  const VIEW = "ne";
 
-// Dynmap world + map name (MUST match Dynmap `name:`)
-const WORLD = "world";
-const MAP   = "iso_NE_30_hires";
+  // Your Cloudflare R2 public base (must end with /)
+  const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-// Cloudflare R2 public base URL (must end with /)
-const BASE_URL = "https://pub-5406e95e9e584f748be162ed018ae7fc.r2.dev/";
+  // Dynmap tile grid rules for your setup:
+  const BLOCKS_PER_TILE = 32;  // z0 tile represents 32x32 blocks
+  const TILES_PER_DIR   = 32;  // folders like -8_5 contain 32x32 tiles
 
-// Dynmap constants
-const BLOCKS_PER_TILE = 128;   // z0 blocks per tile (Dynmap default)
-const TILES_PER_DIR   = 32;    // tiles per bucket folder
+  // Your Dynmap visibility limits (blocks)
+  const X_MIN = -2640, X_MAX = 2720;
+  const Z_MIN = -2720, Z_MAX = 5536;
 
-// Your Dynmap visibility limits (blocks)
-const X_MIN = -2640;
-const X_MAX =  2720;
-const Z_MIN = -2720;
-const Z_MAX =  5536;
+  const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
-// blank tile
-const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
-
-/* ================= HELPERS ================= */
-
-function floorDiv(n, d) {
-  if (n >= 0) return Math.floor(n / d);
-  const q = Math.trunc(n / d);
-  return (q * d === n) ? q : q - 1;
-}
-
-// block → tile index
-const tileX = (x) => floorDiv(x, BLOCKS_PER_TILE);
-const tileY = (z) => floorDiv(z, BLOCKS_PER_TILE);
-
-// tile → bucket folder
-const bucket = (t) => floorDiv(t, TILES_PER_DIR);
-
-/* ================= DERIVED BOUNDS ================= */
-
-const MIN_TX = tileX(X_MIN);
-const MAX_TX = tileX(X_MAX - 1);
-const MIN_TY = tileY(Z_MIN);
-const MAX_TY = tileY(Z_MAX - 1);
-
-const TILES_W = MAX_TX - MIN_TX + 1;
-const TILES_H = MAX_TY - MIN_TY + 1;
-
-/* ================= LEAFLET MAP ================= */
-
-const map = L.map("map", {
-  crs: L.CRS.Simple,
-  minZoom: -6,
-  maxZoom: 2,
-  zoomSnap: 1,
-  zoomControl: true,
-  updateWhenZooming: false
-});
-
-// bounds in pixels at z0
-const TILE_PX = 128; // dynmap tile pixel size
-const bounds = L.latLngBounds(
-  [-(TILES_H * TILE_PX), 0],
-  [0, (TILES_W * TILE_PX)]
-);
-
-// custom tile layer
-const DynmapLayer = L.TileLayer.extend({
-  getTileUrl: function (coords) {
-    const tx = MIN_TX + coords.x;
-    const ty = MAX_TY - coords.y; // flip Y for dynmap grid
-
-    if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY)
-      return BLANK;
-
-    const bx = bucket(tx);
-    const by = bucket(ty);
-
-    return (
-      BASE_URL +
-      `tiles/${WORLD}/${MAP}/${bx}_${by}/${tx}_${ty}.png`
-    );
+  /* ================= HELPERS ================= */
+  function floorDiv(n, d){
+    if(n >= 0) return Math.floor(n/d);
+    const q = Math.trunc(n/d);
+    return (q*d === n) ? q : (q - 1);
   }
-});
+  const tileX = (x) => floorDiv(x, BLOCKS_PER_TILE);
+  const tileY = (z) => floorDiv(z, BLOCKS_PER_TILE);
+  const bucket = (t) => floorDiv(t, TILES_PER_DIR);
 
-new DynmapLayer("", {
-  tileSize: TILE_PX,
-  minNativeZoom: 0,
-  maxNativeZoom: 0,
-  noWrap: true,
-  bounds: bounds,
-  keepBuffer: 6,
-  errorTileUrl: BLANK
-}).addTo(map);
+  function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
+  const BASE = withSlash(BASE_URL);
 
-map.setMaxBounds(bounds);
-map.options.maxBoundsViscosity = 1.0;
-map.fitBounds(bounds.pad(0.12));
+  // pick a tile that almost certainly exists in your bounds
+  const PROBE_TX = tileX(-16);   // near center-ish
+  const PROBE_TY = tileY(-16);
+  const PROBE_BX = bucket(PROBE_TX), PROBE_BY = bucket(PROBE_TY);
 
-/* ================= HUD ================= */
+  function tilePath(ext, tx, ty){
+    const bx = bucket(tx), by = bucket(ty);
+    return `tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${ext}`;
+  }
 
-const hud = document.getElementById("hud");
-const PX_PER_BLOCK = TILE_PX / BLOCKS_PER_TILE;
+  function probe(url, timeoutMs=6000){
+    return new Promise((resolve)=>{
+      const img = new Image();
+      const t = setTimeout(()=>{ img.src=""; resolve(false); }, timeoutMs);
+      img.onload  = ()=>{ clearTimeout(t); resolve(true); };
+      img.onerror = ()=>{ clearTimeout(t); resolve(false); };
+      img.src = url + "?p=" + Date.now();
+    });
+  }
 
-map.on("mousemove", (e) => {
-  const z = map.getZoom();
-  const p = map.project(e.latlng, z);
+  async function detect(){
+    const statusEl = document.getElementById("status");
+    const status = (m, color="#1565c0") => { statusEl.textContent = m; statusEl.style.background = color; };
 
-  // normalize to z0 pixels
-  const px0 = p.x * Math.pow(2, -z);
-  const py0 = p.y * Math.pow(2, -z);
+    // Try jpg then png (your logs show .jpg)
+    for (const ext of ["jpg","png","jpeg"]) {
+      const p = tilePath(ext, PROBE_TX, PROBE_TY);
+      const url = BASE + p;
+      status(`probing:\n${url}`);
+      // eslint-disable-next-line no-await-in-loop
+      if (await probe(url)) {
+        // detect tile pixel size
+        const TILE_PX = await new Promise((resolve)=>{
+          const img = new Image();
+          img.onload = ()=> resolve(img.naturalWidth || 128);
+          img.onerror = ()=> resolve(128);
+          img.src = url + "&s=" + Date.now();
+        });
+        status(`OK\nworld:${WORLD}\nview:${VIEW}\next:.${ext}\ntile:${TILE_PX}px`, "#2e7d32");
+        return { EXT: ext, TILE_PX };
+      }
+    }
+    status(`FAILED\nNo tiles found.\nCheck:\n- bucket public read\n- path is /tiles/${WORLD}/${VIEW}/...\n- upload finished`, "#b71c1c");
+    throw new Error("No tiles found");
+  }
 
-  const X = (px0 / PX_PER_BLOCK) + (MIN_TX * BLOCKS_PER_TILE);
-  const Z = (py0 / PX_PER_BLOCK) + (MIN_TY * BLOCKS_PER_TILE);
+  (async () => {
+    const { EXT, TILE_PX } = await detect();
 
-  const tx = MIN_TX + Math.floor(px0 / TILE_PX);
-  const ty = MAX_TY - Math.floor(py0 / TILE_PX);
+    // Derived file-tile bounds at z0
+    const MIN_TX = tileX(X_MIN);
+    const MAX_TX = tileX(X_MAX - 1);
+    const MIN_TY = tileY(Z_MIN);
+    const MAX_TY = tileY(Z_MAX - 1);
 
-  hud.innerHTML =
-    `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
-    ` | tile:<b>${tx}_${ty}</b>` +
-    ` | z=${z}`;
-});
+    const W = (MAX_TX - MIN_TX + 1);
+    const H = (MAX_TY - MIN_TY + 1);
 
-console.log("Dynmap viewer ready", {
-  WORLD, MAP,
-  MIN_TX, MAX_TX, MIN_TY, MAX_TY
-});
-</script>
+    const map = L.map("map", {
+      crs: L.CRS.Simple,
+      minZoom: -6,
+      maxZoom: 2,
+      zoomSnap: 1,
+      updateWhenZooming: false,
+      zoomControl: true
+    });
 
+    // bounds in z0 pixels
+    const z0Bounds = L.latLngBounds(
+      [-(H * TILE_PX), 0],
+      [0, (W * TILE_PX)]
+    );
+
+    const DynLayer = L.TileLayer.extend({
+      getTileUrl: function(coords){
+        // coords.x/y are z0 indices (we clamp native zoom to 0)
+        const tx = MIN_TX + coords.x;
+        const ty = MAX_TY - coords.y; // flip Y
+
+        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
+
+        const bx = bucket(tx), by = bucket(ty);
+        return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}`;
+      }
+    });
+
+    new DynLayer("", {
+      tileSize: TILE_PX,
+      minNativeZoom: 0,
+      maxNativeZoom: 0,
+      noWrap: true,
+      bounds: z0Bounds,
+      keepBuffer: 6,
+      errorTileUrl: BLANK
+    }).addTo(map);
+
+    map.setMaxBounds(z0Bounds);
+    map.options.maxBoundsViscosity = 1.0;
+    map.fitBounds(z0Bounds.pad(0.12));
+
+    // HUD showing block coords
+    const hud = document.getElementById("hud");
+    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
+
+    function updateHUD(latlng){
+      const z = map.getZoom();
+      const p = map.project(latlng, z);
+      const px0 = p.x * Math.pow(2, -z);
+      const py0 = p.y * Math.pow(2, -z);
+
+      const X = (px0 / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
+      const Z = (py0 / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
+
+      const tx = MIN_TX + Math.floor(px0 / TILE_PX);
+      const ty = MAX_TY - Math.floor(py0 / TILE_PX);
+
+      hud.innerHTML = `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b> | tile:<b>${tx}_${ty}</b> | z=${z}`;
+      return { X, Z };
+    }
+
+    map.on("mousemove", e => updateHUD(e.latlng));
+    map.on("click", e => {
+      const { X, Z } = updateHUD(e.latlng);
+      navigator.clipboard?.writeText(`${Math.floor(X)} ${Math.floor(Z)}`);
+    });
+
+    console.log("Viewer ready", { WORLD, VIEW, EXT, TILE_PX });
+  })();
+  </script>
 </body>
 </html>
