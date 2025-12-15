@@ -186,13 +186,12 @@
     }).addTo(map);
 
     // Start at tile 0_0, zoomed in (z=5 = dynmap z0)
-    // Tile 0_0 in dynmap coords needs to be converted to pixel coords
-    // Tile 0_0 is at offset (0 - MIN_TX) tiles from our origin
-    const tile0_0_offsetX = (0 - MIN_TX) * TILE_PX;
-    const tile0_0_offsetY = (MAX_TY - 0) * TILE_PX;
+    // Calculate pixel position of tile 0_0 at the most zoomed-in level (leaflet zoom 5)
+    const tile0_0_pixelX = (0 - MIN_TX) * TILE_PX;
+    const tile0_0_pixelY = (MAX_TY - 0) * TILE_PX;
     
-    // Convert to LatLng (remember Y is negative in our coordinate system)
-    const tile0_0_center = L.latLng([-tile0_0_offsetY, tile0_0_offsetX]);
+    // Unproject from pixels at zoom 5 to get the correct latlng
+    const tile0_0_center = map.unproject([tile0_0_pixelX, tile0_0_pixelY], MAX_ZOOM);
     map.setView(tile0_0_center, START_ZOOM);
 
     // HUD
