@@ -150,44 +150,38 @@
     });
 
     /**
-     * Dynmap zoom layer with dynamic tile sizes
-     * At zoom 5 (z0): tileSize = TILE_PX (e.g., 128px)
-     * At zoom 4 (z1): tileSize = TILE_PX * 2 (e.g., 256px) - each tile covers 2x2 z0 area
-     * At zoom 0 (z5): tileSize = TILE_PX * 32 (e.g., 4096px) - each tile covers 32x32 z0 area
+     * Dynmap zoom layer
+     * Each dynmap zoom level has tiles that represent progressively larger areas
+     * We use multiple Leaflet layers, one for each dynmap zoom level
      */
-    const DynmapLayer = L.TileLayer.extend({
-      getTileUrl: function (coords) {
-        const leafletZ = this._tileZoom;
-        const dynmapZ = MAX_ZOOM - leafletZ;
-        
-        // At each zoom level, we request tiles directly from that dynmap zoom folder
-        // coords.x and coords.y are already adjusted by Leaflet for the tile size
-        const tx = MIN_TX + coords.x;
-        const ty = MAX_TY - coords.y;
-
-        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
-
-        const bx = bucket(tx), by = bucket(ty);
-        const folder = dynmapZ === 0 ? VIEW : `${VIEW}_${dynmapZ}`;
-        return `${BASE}tiles/${WORLD}/${folder}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
-      },
+    
+    // Create a layer for each dynmap zoom level
+    for (let dynmapZ = 0; dynmapZ <= 5; dynmapZ++) {
+      const leafletZ = MAX_ZOOM - dynmapZ;
+      const scaleFactor = Math.pow(2, dynmapZ);
       
-      // Override to provide dynamic tile size based on zoom
-      _getTileSize: function () {
-        const leafletZ = this._map.getZoom();
-        const dynmapZ = MAX_ZOOM - leafletZ;
-        const scaleFactor = Math.pow(2, dynmapZ);
-        return TILE_PX * scaleFactor;
-      }
-    });
-
-    new DynmapLayer("", {
-      tileSize: TILE_PX, // base size, will be overridden by _getTileSize
-      noWrap: true,
-      keepBuffer: 10,
-      updateWhenIdle: true,
-      errorTileUrl: BLANK
-    }).addTo(map);
+      const layer = L.tileLayer("", {
+        tileSize: TILE_PX * scaleFactor,
+        minNativeZoom: leafletZ,
+        maxNativeZoom: leafletZ,
+        noWrap: true,
+        keepBuffer: 10,
+        updateWhenIdle: true,
+        errorTileUrl: BLANK,
+        getTileUrl: function(coords) {
+          const tx = MIN_TX + coords.x;
+          const ty = MAX_TY - coords.y;
+          
+          if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
+          
+          const bx = bucket(tx), by = bucket(ty);
+          const folder = dynmapZ === 0 ? VIEW : `${VIEW}_${dynmapZ}`;
+          return `${BASE}tiles/${WORLD}/${folder}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
+        }
+      });
+      
+      layer.addTo(map);
+    }
 
     // Start at game coordinates X:0, Z:0 at zoom 5 (dynmap z0)
     // Convert game coords to pixel coords at zoom 5
