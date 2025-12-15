@@ -1,40 +1,4 @@
-/**
-     * Dynmap-style zoom layer:
-     * Leaflet zoom 0 = dynmap z0 (most zoomed in)
-     * Leaflet zoom 5 = dynmap z5 (most zoomed out)
-     */
-    const DynmapLayer = L.TileLayer.extend({
-      getTileUrl: function (coords) {
-        const dynmapZoom = this._tileZoom;
-        
-        // At dynmap z0 (leaflet 0): tiles at full z0 resolution (1:1)
-        // At dynmap z1 (leaflet 1): each tile covers 2x2 z0 area
-        // At dynmap z2 (leaflet 2): each tile covers 4x4 z0 area
-        // At dynmap z5 (leaflet 5): each tile covers 32x32 z0 area
-        
-        // Scale factor: at z1 we need 1/2 as many tiles, at z2 we need 1/4, etc.
-        const scale = Math.pow(2, dynmapZoom);
-        
-        // Map leaflet tile coords to dynmap tile indices at this zoom
-        const tx = MIN_TX + Math.floor(coords.x / scale);
-        const ty = MAX_TY - Math.floor(coords.y / scale);
-
-        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
-
-        const bx = bucket(tx), by = bucket(ty);
-        // Request from the appropriate dynmap zoom folder
-        const folder = dynmapZoom === 0 ? VIEW : `${VIEW}_${dynmapZoom}`;
-        return `${BASE}tiles/${WORLD}/${folder}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
-      }
-    });
-
-    new DynmapLayer("", {
-      tileSize: TILE_PX,
-      noWrap: true,
-      keepBuffer: 10,
-      updateWhenIdle: true,
-      errorTileUrl: BLANK
-    }).addTo(map);<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -91,12 +55,11 @@
   const X_MIN = -2640, X_MAX = 2720;
   const Z_MIN = -2720, Z_MAX = 5536;
 
-  // We have 6 dynmap zoom levels (z0 to z5)
-  // z0 = most zoomed IN, z5 = most zoomed OUT
-  // Map directly: Leaflet zoom 0 = z0, zoom 5 = z5
-  const MIN_ZOOM   = 0;   // = dynmap z0 (most zoomed in)
-  const MAX_ZOOM   = 5;   // = dynmap z5 (most zoomed out)
-  const START_ZOOM = 5;   // start at most zoomed out view
+  // Dynmap has z0 (most in) to z5 (most out)
+  // We'll use Leaflet zoom 5 (most in) to 0 (most out) to keep zoom-in intuitive
+  const MIN_ZOOM   = 0;  // most zoomed out = dynmap z5
+  const MAX_ZOOM   = 5;  // most zoomed in = dynmap z0
+  const START_ZOOM = 0;  // start zoomed out
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
@@ -140,7 +103,6 @@
       const url = BASE + tilePath(ext, PROBE_TX, PROBE_TY);
       status(`probing:\n${url}`);
 
-      // eslint-disable-next-line no-await-in-loop
       if (await probe(url)) {
         const TILE_PX = await new Promise((resolve)=>{
           const img = new Image();
@@ -161,7 +123,7 @@
   (async () => {
     const { EXT, TILE_PX } = await detect();
 
-    // tile-index bounds at z0
+    // tile-index bounds at z0 (most zoomed in)
     const MIN_TX = tileX(X_MIN);
     const MAX_TX = tileX(X_MAX - 1);
     const MIN_TY = tileY(Z_MIN);
@@ -170,7 +132,7 @@
     const W = (MAX_TX - MIN_TX + 1);
     const H = (MAX_TY - MIN_TY + 1);
 
-    // z0 pixel bounds (render rectangle)
+    // z0 pixel bounds at leaflet zoom 5 (most zoomed in = dynmap z0)
     const z0Bounds = L.latLngBounds(
       [-(H * TILE_PX), 0],
       [0, (W * TILE_PX)]
@@ -186,32 +148,30 @@
     });
 
     /**
-     * Dynmap-style zoom layer:
-     * Leaflet zoom 0 = dynmap z5 (most zoomed out)
-     * Leaflet zoom 5 = dynmap z0 (most zoomed in)
+     * Dynmap zoom layer
+     * Leaflet zoom 5 = dynmap z0 (most in)
+     * Leaflet zoom 0 = dynmap z5 (most out)
      */
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
-        const leafletZoom = this._tileZoom;
-        // Convert: Leaflet 0->5 to Dynmap z5->z0
-        const dynmapZoom = (MAX_ZOOM - leafletZoom);
+        const leafletZ = this._tileZoom;
+        const dynmapZ = MAX_ZOOM - leafletZ; // 5->0, 4->1, 3->2, 2->3, 1->4, 0->5
         
-        // At dynmap z0 (leaflet 5): full detail z0 tiles
-        // At dynmap z1 (leaflet 4): each tile covers 2x2 z0 tiles
-        // At dynmap z2 (leaflet 3): each tile covers 4x4 z0 tiles, etc.
+        // At dynmap z0: 1:1 mapping
+        // At dynmap z1: each tile = 2x2 z0 tiles
+        // At dynmap z5: each tile = 32x32 z0 tiles
+        const tilesPerDynmapTile = Math.pow(2, dynmapZ);
         
-        // Scale factor: how many z0 tiles does one tile at this zoom cover?
-        const scale = Math.pow(2, dynmapZoom);
-        
-        // Map leaflet tile coords to z0 tile indices
-        const tx = MIN_TX + (coords.x * scale);
-        const ty = MAX_TY - (coords.y * scale);
+        // Leaflet gives us coords at the current zoom level
+        // We need to map them to dynmap tile indices
+        const tx = MIN_TX + Math.floor(coords.x / tilesPerDynmapTile);
+        const ty = MAX_TY - Math.floor(coords.y / tilesPerDynmapTile);
 
         if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
 
         const bx = bucket(tx), by = bucket(ty);
-        // Request from the appropriate dynmap zoom folder
-        return `${BASE}tiles/${WORLD}/${VIEW}_${dynmapZoom}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
+        const folder = dynmapZ === 0 ? VIEW : `${VIEW}_${dynmapZ}`;
+        return `${BASE}tiles/${WORLD}/${folder}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
       }
     });
 
@@ -223,7 +183,7 @@
       errorTileUrl: BLANK
     }).addTo(map);
 
-    // Center on the rendered rectangle and START at most zoomed out
+    // Start zoomed out
     map.fitBounds(z0Bounds.pad(0.12));
     map.setZoom(START_ZOOM);
 
@@ -232,23 +192,22 @@
     const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
     function updateHUD(latlng){
-      const dynmapZ = map.getZoom();
+      const leafletZ = map.getZoom();
+      const dynmapZ = MAX_ZOOM - leafletZ;
 
-      const p = map.project(latlng, dynmapZ);
-      const scale = Math.pow(2, dynmapZ);
-      const px0 = p.x * scale;
-      const py0 = p.y * scale;
+      // Project to the most zoomed in level (leaflet 5 = dynmap z0)
+      const p = map.project(latlng, MAX_ZOOM);
+      
+      const X = (p.x / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
+      const Z = (p.y / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
 
-      const X = (px0 / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
-      const Z = (py0 / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
-
-      const tx = MIN_TX + Math.floor(px0 / TILE_PX);
-      const ty = MAX_TY - Math.floor(py0 / TILE_PX);
+      const tx = MIN_TX + Math.floor(p.x / TILE_PX);
+      const ty = MAX_TY - Math.floor(p.y / TILE_PX);
 
       hud.innerHTML =
         `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
         ` | tile:<b>${tx}_${ty}</b>` +
-        ` | dynmap z<b>${dynmapZ}</b>`;
+        ` | dynmap z<b>${dynmapZ}</b> (leaflet z=${leafletZ})`;
 
       return { X, Z };
     }
