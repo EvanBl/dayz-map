@@ -149,16 +149,31 @@
 
     /**
      * Multi-zoom layer: at ANY zoom level, request the SAME z0 tiles
-     * but let Leaflet scale/position them naturally
+     * At z>0: each z0 tile splits into multiple leaflet tiles
+     * At z<0: multiple z0 tiles fit into one leaflet tile
      */
     const MultiZoomLayer = L.TileLayer.extend({
       getTileUrl: function (coords) {
-        const z = this._tileZoom; // current map zoom
+        const z = this._tileZoom;
         
-        // Convert current zoom coords back to z0 tile indices
-        const scale = Math.pow(2, z);
-        const tx = MIN_TX + Math.floor(coords.x / scale);
-        const ty = MAX_TY - Math.floor(coords.y / scale);
+        // At positive zoom: coords are finer, need to map back to coarser z0 tiles
+        // At negative zoom: coords are coarser, need to map forward to finer z0 tiles
+        let tx, ty;
+        
+        if (z >= 0) {
+          // z=0: coords.x maps 1:1 to z0 tiles
+          // z=1: 2x2 leaflet tiles per z0 tile, so divide by 2
+          // z=2: 4x4 leaflet tiles per z0 tile, so divide by 4
+          const tilesPerZ0 = Math.pow(2, z);
+          tx = MIN_TX + Math.floor(coords.x / tilesPerZ0);
+          ty = MAX_TY - Math.floor(coords.y / tilesPerZ0);
+        } else {
+          // z=-1: each leaflet tile shows 2x2 z0 tiles, so multiply by 2
+          // z=-2: each leaflet tile shows 4x4 z0 tiles, so multiply by 4
+          const z0PerTile = Math.pow(2, -z);
+          tx = MIN_TX + (coords.x * z0PerTile);
+          ty = MAX_TY - (coords.y * z0PerTile);
+        }
 
         if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
 
