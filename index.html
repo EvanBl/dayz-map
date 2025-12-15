@@ -59,7 +59,7 @@
   // We'll use Leaflet zoom 5 (most in) to 0 (most out) to keep zoom-in intuitive
   const MIN_ZOOM   = 0;  // most zoomed out = dynmap z5
   const MAX_ZOOM   = 5;  // most zoomed in = dynmap z0
-  const START_ZOOM = 0;  // start zoomed out
+  const START_ZOOM = 5;  // start zoomed in at z0
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
@@ -144,7 +144,9 @@
       maxZoom: MAX_ZOOM,
       zoomSnap: 1,
       updateWhenZooming: false,
-      zoomControl: true
+      zoomControl: true,
+      maxBounds: z0Bounds.pad(0.1), // lock to rendered area
+      maxBoundsViscosity: 1.0 // hard lock, no dragging outside
     });
 
     /**
@@ -183,9 +185,10 @@
       errorTileUrl: BLANK
     }).addTo(map);
 
-    // Start zoomed out
-    map.fitBounds(z0Bounds.pad(0.12));
-    map.setZoom(START_ZOOM);
+    // Start at tile 0_0, zoomed in (z=5 = dynmap z0)
+    // Tile 0_0 is at the top-left of our coordinate system
+    const tile0_0_center = L.latLng([0, 0]);
+    map.setView(tile0_0_center, START_ZOOM);
 
     // HUD
     const hud = document.getElementById("hud");
