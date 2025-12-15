@@ -153,38 +153,30 @@
     const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
     
     /**
-     * Dynmap zoom layer
-     * Each dynmap zoom level has tiles that represent progressively larger areas
-     * We use multiple Leaflet layers, one for each dynmap zoom level
+     * Single layer using only z0 tiles (scaled by Leaflet at different zooms)
+     * Since you only have z0 tiles, we'll let Leaflet scale them
      */
     
-    // Create a layer for each dynmap zoom level
-    for (let dynmapZ = 0; dynmapZ <= 5; dynmapZ++) {
-      const leafletZ = MAX_ZOOM - dynmapZ;
-      const scaleFactor = Math.pow(2, dynmapZ);
-      
-      const layer = L.tileLayer("", {
-        tileSize: TILE_PX * scaleFactor,
-        minNativeZoom: leafletZ,
-        maxNativeZoom: leafletZ,
-        noWrap: true,
-        keepBuffer: 10,
-        updateWhenIdle: true,
-        errorTileUrl: BLANK,
-        getTileUrl: function(coords) {
-          const tx = MIN_TX + coords.x;
-          const ty = MAX_TY - coords.y;
-          
-          if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
-          
-          const bx = bucket(tx), by = bucket(ty);
-          const folder = dynmapZ === 0 ? VIEW : `${VIEW}_${dynmapZ}`;
-          return `${BASE}tiles/${WORLD}/${folder}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
-        }
-      });
-      
-      layer.addTo(map);
-    }
+    L.tileLayer("", {
+      tileSize: TILE_PX,
+      noWrap: true,
+      keepBuffer: 10,
+      updateWhenIdle: true,
+      errorTileUrl: BLANK,
+      getTileUrl: function(coords) {
+        const z = this._getZoomForUrl();
+        
+        // Scale coords based on zoom level
+        const scale = Math.pow(2, MAX_ZOOM - z);
+        const tx = MIN_TX + Math.floor(coords.x / scale);
+        const ty = MAX_TY - Math.floor(coords.y / scale);
+        
+        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
+        
+        const bx = bucket(tx), by = bucket(ty);
+        return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
+      }
+    }).addTo(map);
 
     // Start at game coordinates X:0, Z:0 at zoom 5 (dynmap z0)
     // Convert game coords to pixel coords at zoom 5
