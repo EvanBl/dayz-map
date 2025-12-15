@@ -149,6 +149,9 @@
       maxBoundsViscosity: 1.0 // hard lock, no dragging outside
     });
 
+    // HUD setup
+    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
+    
     /**
      * Dynmap zoom layer
      * Each dynmap zoom level has tiles that represent progressively larger areas
@@ -194,7 +197,6 @@
 
     // HUD
     const hud = document.getElementById("hud");
-    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
     function updateHUD(latlng){
       const leafletZ = map.getZoom();
