@@ -44,22 +44,18 @@
   /* ================= CONFIG ================= */
 
   const WORLD = "world";
-  const VIEW  = "ne"; // dynmap prefix
+  const VIEW  = "ne";
   const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-  // your dynmap setup
   const BLOCKS_PER_TILE = 32;
   const TILES_PER_DIR   = 32;
 
-  // rendered bounds (blocks)
   const X_MIN = -2640, X_MAX = 2720;
   const Z_MIN = -2720, Z_MAX = 5536;
 
-  // Dynmap has z0 (most in) to z5 (most out)
-  // We'll use Leaflet zoom 5 (most in) to 0 (most out) to keep zoom-in intuitive
-  const MIN_ZOOM   = 0;  // most zoomed out = dynmap z5
-  const MAX_ZOOM   = 5;  // most zoomed in = dynmap z0
-  const START_ZOOM = 5;  // start zoomed in at z0
+  const MIN_ZOOM   = 0;
+  const MAX_ZOOM   = 0;
+  const START_ZOOM = 0;
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
@@ -76,7 +72,6 @@
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
   const BASE = withSlash(BASE_URL);
 
-  // probe a likely tile
   const PROBE_TX = tileX(-16);
   const PROBE_TY = tileY(-16);
 
@@ -123,7 +118,6 @@
   (async () => {
     const { EXT, TILE_PX } = await detect();
 
-    // tile-index bounds at z0 (most zoomed in)
     const MIN_TX = tileX(X_MIN);
     const MAX_TX = tileX(X_MAX - 1);
     const MIN_TY = tileY(Z_MIN);
@@ -132,7 +126,6 @@
     const W = (MAX_TX - MIN_TX + 1);
     const H = (MAX_TY - MIN_TY + 1);
 
-    // z0 pixel bounds at leaflet zoom 5 (most zoomed in = dynmap z0)
     const z0Bounds = L.latLngBounds(
       [-(H * TILE_PX), 0],
       [0, (W * TILE_PX)]
@@ -145,18 +138,10 @@
       zoomSnap: 1,
       updateWhenZooming: false,
       zoomControl: true,
-      maxBounds: z0Bounds.pad(0.1), // lock to rendered area
-      maxBoundsViscosity: 1.0 // hard lock, no dragging outside
+      maxBounds: z0Bounds.pad(0.1),
+      maxBoundsViscosity: 1.0
     });
 
-    // HUD setup
-    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
-    
-    /**
-     * Single layer using only z0 tiles (scaled by Leaflet at different zooms)
-     * Since you only have z0 tiles, we'll let Leaflet scale them
-     */
-    
     L.tileLayer("", {
       tileSize: TILE_PX,
       noWrap: true,
@@ -164,38 +149,29 @@
       updateWhenIdle: true,
       errorTileUrl: BLANK,
       getTileUrl: function(coords) {
-        const z = this._getZoomForUrl();
-        
-        // Scale coords based on zoom level
-        const scale = Math.pow(2, MAX_ZOOM - z);
-        const tx = MIN_TX + Math.floor(coords.x / scale);
-        const ty = MAX_TY - Math.floor(coords.y / scale);
-        
+        const tx = MIN_TX + coords.x;
+        const ty = MAX_TY - coords.y;
+
         if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
-        
+
         const bx = bucket(tx), by = bucket(ty);
         return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
       }
     }).addTo(map);
 
-    // Start at game coordinates X:0, Z:0 at zoom 5 (dynmap z0)
-    // Convert game coords to pixel coords at zoom 5
+    // Calculate position of game coordinates X:0, Z:0
+    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
     const x0_pixels = (0 - (MIN_TX * BLOCKS_PER_TILE)) * pxPerBlock;
     const z0_pixels = (0 - (MIN_TY * BLOCKS_PER_TILE)) * pxPerBlock;
+    const startPos = map.unproject([x0_pixels, z0_pixels], 0);
     
-    // Unproject to latlng at zoom 5
-    const startPos = map.unproject([x0_pixels, z0_pixels], MAX_ZOOM);
     map.setView(startPos, START_ZOOM);
 
     // HUD
     const hud = document.getElementById("hud");
 
     function updateHUD(latlng){
-      const leafletZ = map.getZoom();
-      const dynmapZ = MAX_ZOOM - leafletZ;
-
-      // Project to the most zoomed in level (leaflet 5 = dynmap z0)
-      const p = map.project(latlng, MAX_ZOOM);
+      const p = map.project(latlng, 0);
       
       const X = (p.x / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
       const Z = (p.y / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
@@ -205,8 +181,7 @@
 
       hud.innerHTML =
         `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
-        ` | tile:<b>${tx}_${ty}</b>` +
-        ` | dynmap z<b>${dynmapZ}</b> (leaflet z=${leafletZ})`;
+        ` | tile:<b>${tx}_${ty}</b>`;
 
       return { X, Z };
     }
