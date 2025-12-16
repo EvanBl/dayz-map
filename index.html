@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>DayZ World Map (Dynmap z0 minimal)</title>
+  <title>DayZ World Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- disable caching while testing -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -14,21 +15,21 @@
     html, body, #map { height:100%; margin:0; padding:0; }
     .leaflet-container { background:#0b0f14; }
 
-    #status, #hud {
+    #hud, #status {
       position: fixed;
       left: 10px;
       z-index: 9999;
-      padding: 8px 10px;
-      border-radius: 10px;
+      padding: 6px 10px;
+      border-radius: 8px;
       color: #fff;
       font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       pointer-events: none;
-      background: rgba(0,0,0,.65);
+      background: rgba(0,0,0,.6);
       max-width: 85vw;
       white-space: pre-wrap;
       word-break: break-word;
     }
-    #status { top: 10px; background:#1565c0; }
+    #status { top: 10px; font: 14px system-ui, sans-serif; background:#1565c0; }
     #hud { bottom: 10px; }
     #hud b { color:#8bc34a; }
   </style>
@@ -40,173 +41,183 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-  /* ================= CONFIG (BASE z0 ONLY) ================= */
+  /* ================= CONFIG ================= */
 
-  // Dynmap folder structure:
-  // {BASE}/tiles/{WORLD}/{VIEW}/{bx_by}/{tx_ty}.jpg
-  const WORLD   = "world";
-  const VIEW    = "ne";
+  const WORLD = "world";
+  const VIEW  = "ne"; // dynmap prefix
   const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-  // confirmed from your overlay
-  const EXT = "jpg";
-  const TILE_PX = 128;
+  // your dynmap setup
+  const BLOCKS_PER_TILE = 32;
+  const TILES_PER_DIR   = 32;
 
-  // dynmap buckets: 32 tiles per dir
-  const TILES_PER_DIR = 32;
+  // rendered bounds (blocks)
+  const X_MIN = -2640, X_MAX = 2720;
+  const Z_MIN = -2720, Z_MAX = 5536;
 
-  // If the entire world is mirrored, flip here.
-  // Start with BOTH false.
-  const FLIP_X = false;
-  const FLIP_Y = false;
+  // Dynmap has z0 (most in) to z5 (most out)
+  // We'll use Leaflet zoom 5 (most in) to 0 (most out) to keep zoom-in intuitive
+  const MIN_ZOOM   = 0;  // most zoomed out = dynmap z5
+  const MAX_ZOOM   = 5;  // most zoomed in = dynmap z0
+  const START_ZOOM = 5;  // start zoomed in at z0
 
-  // Probe/search settings (find a real tile to start on)
-  const PROBE_MAX_RADIUS = 256;   // tiles
-  const PROBE_TIMEOUT_MS = 2500;
-
-  // blank fallback if tile 404s
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
   /* ================= HELPERS ================= */
+  function floorDiv(n, d){
+    if(n >= 0) return Math.floor(n/d);
+    const q = Math.trunc(n/d);
+    return (q*d === n) ? q : (q - 1);
+  }
+  const tileX  = (x) => floorDiv(x, BLOCKS_PER_TILE);
+  const tileY  = (z) => floorDiv(z, BLOCKS_PER_TILE);
+  const bucket = (t) => floorDiv(t, TILES_PER_DIR);
 
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
   const BASE = withSlash(BASE_URL);
 
-  function floorDiv(n, d){
-    if (n >= 0) return Math.floor(n / d);
-    const q = Math.trunc(n / d);
-    return (q * d === n) ? q : (q - 1);
+  // probe a likely tile
+  const PROBE_TX = tileX(-16);
+  const PROBE_TY = tileY(-16);
+
+  function tilePath(ext, tx, ty){
+    const bx = bucket(tx), by = bucket(ty);
+    return `tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${ext}`;
   }
 
-  function bucket(t){ return floorDiv(t, TILES_PER_DIR); }
-
-  function tileUrl(tx, ty){
-    const bx = bucket(tx);
-    const by = bucket(ty);
-    return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}`;
-  }
-
-  function probeImage(url, timeoutMs){
-    return new Promise((resolve) => {
+  function probe(url, timeoutMs=6000){
+    return new Promise((resolve)=>{
       const img = new Image();
-      const t = setTimeout(() => { img.src = ""; resolve(false); }, timeoutMs);
-      img.onload = () => { clearTimeout(t); resolve(true); };
-      img.onerror = () => { clearTimeout(t); resolve(false); };
+      const t = setTimeout(()=>{ img.src=""; resolve(false); }, timeoutMs);
+      img.onload  = ()=>{ clearTimeout(t); resolve(true); };
+      img.onerror = ()=>{ clearTimeout(t); resolve(false); };
       img.src = url + "?p=" + Date.now();
     });
   }
 
-  // Spiral offsets (0,0) then outward
-  function* spiral(maxR){
-    yield [0,0];
-    for (let r = 1; r <= maxR; r++){
-      // top edge (left->right)
-      for (let x = -r; x <= r; x++) yield [x, -r];
-      // right edge (top->bottom)
-      for (let y = -r + 1; y <= r; y++) yield [r, y];
-      // bottom edge (right->left)
-      for (let x = r - 1; x >= -r; x--) yield [x, r];
-      // left edge (bottom->top)
-      for (let y = r - 1; y >= -r + 1; y--) yield [-r, y];
-    }
-  }
-
-  async function findStartTile(){
+  async function detect(){
     const statusEl = document.getElementById("status");
-    const setStatus = (msg, color="#1565c0") => { statusEl.textContent = msg; statusEl.style.background = color; };
+    const status = (m, color="#1565c0") => { statusEl.textContent = m; statusEl.style.background = color; };
 
-    setStatus("probing for a real tile near (0,0)…");
+    for (const ext of ["jpg","png","jpeg"]) {
+      const url = BASE + tilePath(ext, PROBE_TX, PROBE_TY);
+      status(`probing:\n${url}`);
 
-    for (const [dx, dy] of spiral(PROBE_MAX_RADIUS)){
-      const tx = dx;
-      const ty = dy;
-      const url = tileUrl(tx, ty);
-      // eslint-disable-next-line no-await-in-loop
-      const ok = await probeImage(url, PROBE_TIMEOUT_MS);
-      if (ok){
-        setStatus(`OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\nstartTile:${tx}_${ty}`, "#2e7d32");
-        return { tx, ty };
+      if (await probe(url)) {
+        const TILE_PX = await new Promise((resolve)=>{
+          const img = new Image();
+          img.onload = ()=> resolve(img.naturalWidth || 128);
+          img.onerror = ()=> resolve(128);
+          img.src = url + "&s=" + Date.now();
+        });
+
+        status(`OK\nworld:${WORLD}\nview:${VIEW}\next:.${ext}\ntile:${TILE_PX}px`, "#2e7d32");
+        return { EXT: ext, TILE_PX };
       }
     }
 
-    setStatus(`FAILED\nNo tiles found near origin.\nCheck BASE_URL / public access / path.`, "#b71c1c");
-    throw new Error("No tiles found in probe radius");
+    status(`FAILED\nNo tiles found.\nCheck:\n- public read\n- /tiles/${WORLD}/${VIEW}/...\n- upload finished`, "#b71c1c");
+    throw new Error("No tiles found");
   }
-
-  /* ================= MAP ================= */
-
-  const map = L.map("map", {
-    crs: L.CRS.Simple,
-    minZoom: 0,
-    maxZoom: 0,
-    zoomSnap: 1,
-    zoomControl: true,
-    inertia: true
-  });
-
-  // IMPORTANT:
-  // We intentionally use GridLayer so Leaflet gives us tile coords (x,y) at z=0.
-  // We treat those as Dynmap tile coords (tx,ty). No “world block math” here.
-  const DynZ0 = L.GridLayer.extend({
-    createTile: function(coords){
-      const img = document.createElement("img");
-      img.width = TILE_PX;
-      img.height = TILE_PX;
-      img.alt = `${coords.x}_${coords.y}`;
-
-      // Leaflet y grows downward. Dynmap tile grid also grows “down” in image space,
-      // but if your whole map is upside-down you can toggle FLIP_Y.
-      let tx = coords.x;
-      let ty = coords.y;
-      if (FLIP_X) tx = -tx - 1;
-      if (FLIP_Y) ty = -ty - 1;
-
-      img.src = tileUrl(tx, ty);
-      img.onerror = () => { img.src = BLANK; };
-      return img;
-    }
-  });
-
-  new DynZ0({
-    tileSize: TILE_PX,
-    keepBuffer: 8,
-    updateWhenIdle: true,
-    updateWhenZooming: false
-  }).addTo(map);
-
-  // Coordinate system: latlng units == pixels.
-  // So “tile (tx,ty)” is the pixel point (tx*TILE_PX, ty*TILE_PX).
-  function tileToLatLng(tx, ty){
-    const xPx = tx * TILE_PX;
-    const yPx = ty * TILE_PX;
-    return L.latLng(yPx + TILE_PX/2, xPx + TILE_PX/2);
-  }
-
-  const hud = document.getElementById("hud");
-
-  function updateHUD(latlng){
-    const xPx = latlng.lng;
-    const yPx = latlng.lat;
-    const tx = Math.floor(xPx / TILE_PX);
-    const ty = Math.floor(yPx / TILE_PX);
-    hud.innerHTML =
-      `px x:<b>${xPx.toFixed(1)}</b> y:<b>${yPx.toFixed(1)}</b>` +
-      ` | tile:<b>${tx}_${ty}</b>` +
-      ` | z0 only`;
-  }
-
-  map.on("mousemove", e => updateHUD(e.latlng));
-  map.on("click", e => {
-    updateHUD(e.latlng);
-    const tx = Math.floor(e.latlng.lng / TILE_PX);
-    const ty = Math.floor(e.latlng.lat / TILE_PX);
-    navigator.clipboard?.writeText(`${tx} ${ty}`);
-  });
 
   (async () => {
-    const { tx, ty } = await findStartTile();
-    map.setView(tileToLatLng(tx, ty), 0);
-    updateHUD(map.getCenter());
+    const { EXT, TILE_PX } = await detect();
+
+    // tile-index bounds at z0 (most zoomed in)
+    const MIN_TX = tileX(X_MIN);
+    const MAX_TX = tileX(X_MAX - 1);
+    const MIN_TY = tileY(Z_MIN);
+    const MAX_TY = tileY(Z_MAX - 1);
+
+    const W = (MAX_TX - MIN_TX + 1);
+    const H = (MAX_TY - MIN_TY + 1);
+
+    // z0 pixel bounds at leaflet zoom 5 (most zoomed in = dynmap z0)
+    const z0Bounds = L.latLngBounds(
+      [-(H * TILE_PX), 0],
+      [0, (W * TILE_PX)]
+    );
+
+    const map = L.map("map", {
+      crs: L.CRS.Simple,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      zoomSnap: 1,
+      updateWhenZooming: false,
+      zoomControl: true,
+      maxBounds: z0Bounds.pad(0.1), // lock to rendered area
+      maxBoundsViscosity: 1.0 // hard lock, no dragging outside
+    });
+
+    // HUD setup
+    const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
+    
+    /**
+     * Single layer using only z0 tiles (scaled by Leaflet at different zooms)
+     * Since you only have z0 tiles, we'll let Leaflet scale them
+     */
+    
+    L.tileLayer("", {
+      tileSize: TILE_PX,
+      noWrap: true,
+      keepBuffer: 10,
+      updateWhenIdle: true,
+      errorTileUrl: BLANK,
+      getTileUrl: function(coords) {
+        const z = this._getZoomForUrl();
+        
+        // Scale coords based on zoom level
+        const scale = Math.pow(2, MAX_ZOOM - z);
+        const tx = MIN_TX + Math.floor(coords.x / scale);
+        const ty = MAX_TY - Math.floor(coords.y / scale);
+        
+        if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
+        
+        const bx = bucket(tx), by = bucket(ty);
+        return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${tx}_${ty}.${EXT}?v=1`;
+      }
+    }).addTo(map);
+
+    // Start at game coordinates X:0, Z:0 at zoom 5 (dynmap z0)
+    // Convert game coords to pixel coords at zoom 5
+    const x0_pixels = (0 - (MIN_TX * BLOCKS_PER_TILE)) * pxPerBlock;
+    const z0_pixels = (0 - (MIN_TY * BLOCKS_PER_TILE)) * pxPerBlock;
+    
+    // Unproject to latlng at zoom 5
+    const startPos = map.unproject([x0_pixels, z0_pixels], MAX_ZOOM);
+    map.setView(startPos, START_ZOOM);
+
+    // HUD
+    const hud = document.getElementById("hud");
+
+    function updateHUD(latlng){
+      const leafletZ = map.getZoom();
+      const dynmapZ = MAX_ZOOM - leafletZ;
+
+      // Project to the most zoomed in level (leaflet 5 = dynmap z0)
+      const p = map.project(latlng, MAX_ZOOM);
+      
+      const X = (p.x / pxPerBlock) + (MIN_TX * BLOCKS_PER_TILE);
+      const Z = (p.y / pxPerBlock) + (MIN_TY * BLOCKS_PER_TILE);
+
+      const tx = MIN_TX + Math.floor(p.x / TILE_PX);
+      const ty = MAX_TY - Math.floor(p.y / TILE_PX);
+
+      hud.innerHTML =
+        `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
+        ` | tile:<b>${tx}_${ty}</b>` +
+        ` | dynmap z<b>${dynmapZ}</b> (leaflet z=${leafletZ})`;
+
+      return { X, Z };
+    }
+
+    map.on("mousemove", e => updateHUD(e.latlng));
+    map.on("click", e => {
+      const { X, Z } = updateHUD(e.latlng);
+      navigator.clipboard?.writeText(`${Math.floor(X)} ${Math.floor(Z)}`);
+    });
+
+    console.log("Viewer ready", { WORLD, VIEW, EXT, TILE_PX });
   })();
   </script>
 </body>
