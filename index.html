@@ -70,6 +70,16 @@
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
+  /* ================= TILE AXIS FIX (MISALIGNMENT) =================
+     Your stitching indicates Leaflet's (x,y) isn't matching Dynmap's (tx,ty)
+     for this isometric view. These toggles fix transpose/mirroring.
+
+     Start here (most likely for your screenshot):
+  */
+  const SWAP_AXES = true;   // transpose
+  const FLIP_X    = false;  // mirror horizontally
+  const FLIP_Y    = true;   // mirror vertically
+
   /* ================= HELPERS ================= */
 
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
@@ -94,6 +104,20 @@
     return "z".repeat(zoomOut) + "_";
   }
 
+  // Convert Leaflet tile coords -> Dynmap tx/ty
+  function leafletToDynmapTile(cx, cy) {
+    let a = cx;
+    let b = cy;
+
+    if (SWAP_AXES) [a, b] = [b, a];
+
+    // Important: the -1 aligns boundaries (0..127, 128..255...)
+    if (FLIP_Y) b = -b - 1;
+    if (FLIP_X) a = -a - 1;
+
+    return { tx: a, ty: b };
+  }
+
   // Build dynmap tile URL for given (tx,ty) at zoomOut level
   function dynTileUrl(tx, ty, zoomOut){
     const bx = bucket(tx);
@@ -104,15 +128,10 @@
 
   /* ================= MAP SETUP ================= */
 
-  // IMPORTANT: anchor world origin at (0,0) in *block space*
-  // We'll represent map coordinates in "z0 pixels", where:
-  //   1 block = TILE_PX / BLOCKS_PER_TILE pixels (at zoom 0)
+  // Anchor world origin at (0,0) in *block space*
+  // CRS units are z0 pixels:
   const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
-  // Our CRS coordinate system:
-  //   lng = xBlocks * pxPerBlock
-  //   lat = zBlocks * pxPerBlock
-  // That makes (0,0) exactly your dynmap origin anchor.
   const map = L.map("map", {
     crs: L.CRS.Simple,
     minZoom: MIN_ZOOM,
@@ -122,34 +141,24 @@
     zoomControl: true
   });
 
-  // Tile layer that uses dynmap zoom-out tiles for z<=0.
+  // Tile layer:
+  // - For zoom <= 0: request actual dynmap zoom-out tiles (z_, zz_, ...)
+  // - For zoom > 0: Leaflet will scale native tiles (maxNativeZoom=0)
   const DynmapLayer = L.TileLayer.extend({
     getTileUrl: function (coords) {
-      // NOTE: Leaflet will call this with coords.z = tileZoom,
-      // and because we set maxNativeZoom=0, for map zoom > 0
-      // it will still request coords.z = 0 (scaled tiles).
       const tileZoom = coords.z;
-
-      // Dynmap "zoomOut" level:
-      // z = 0 => zoomOut 0 (base)
-      // z = -1 => zoomOut 1 (z_)
-      // z = -2 => zoomOut 2 (zz_)
       const zoomOut = Math.max(0, -tileZoom);
 
-      // With our origin anchored at 0,0 in block space,
-      // Leaflet tile coords map directly to dynmap tile indices for that zoom.
-      const tx = coords.x;
-      const ty = coords.y;
+      // Leaflet tile coords -> Dynmap tile coords
+      const { tx, ty } = leafletToDynmapTile(coords.x, coords.y);
 
       return dynTileUrl(tx, ty, zoomOut);
     }
   });
 
-  // Add layer.
-  // Key: maxNativeZoom=0 makes zoom-in (z>0) scale z0 tiles instead of requesting non-existent tiles.
-  const layer = new DynmapLayer("", {
+  new DynmapLayer("", {
     tileSize: TILE_PX,
-    noWrap: true,
+    noWrap: false,           // don't clamp; let it request whatever exists
     keepBuffer: 12,
     updateWhenZooming: false,
     updateWhenIdle: true,
@@ -157,13 +166,12 @@
     maxNativeZoom: 0
   }).addTo(map);
 
-  // Start centered near origin; you can change this.
-  // Center at world origin (0,0) => CRS point (0,0)
+  // Start at max zoom-out (-6) centered at origin
   map.setView([0, 0], START_ZOOM);
 
   // UI status
   document.getElementById("status").textContent =
-    `OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\norigin anchored at (0,0)`;
+    `OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\norigin anchored at (0,0)\nSWAP=${SWAP_AXES} FLIP_X=${FLIP_X} FLIP_Y=${FLIP_Y}`;
 
   /* ================= HUD ================= */
 
@@ -191,14 +199,22 @@
   });
 
   /* ================= QUICK SELF-TEST =================
-     Optional: verify we can load the base origin tile (0,0) at zoomOut 0.
+     Probe a couple likely tiles at zoomOut 0 and zoomOut 1
   */
-  (function probeOrigin(){
-    const url = dynTileUrl(0, 0, 0) + `?t=${Date.now()}`;
-    const img = new Image();
-    img.onload = () => console.log("Probe OK:", url);
-    img.onerror = () => console.warn("Probe failed (origin tile may not exist yet):", url);
-    img.src = url;
+  (function probe(){
+    const urls = [
+      dynTileUrl(0, 0, 0),
+      dynTileUrl(0, 0, 1),
+      dynTileUrl(1, 0, 0),
+      dynTileUrl(0, 1, 0),
+    ].map(u => u + `?t=${Date.now()}`);
+
+    urls.forEach((url) => {
+      const img = new Image();
+      img.onload = () => console.log("Probe OK:", url);
+      img.onerror = () => console.warn("Probe failed:", url);
+      img.src = url;
+    });
   })();
   </script>
 </body>
