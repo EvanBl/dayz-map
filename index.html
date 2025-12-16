@@ -20,7 +20,7 @@
       left: 10px;
       z-index: 9999;
       padding: 6px 10px;
-      border-radius: 8px;
+      border-radius: 10px;
       color: #fff;
       font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       pointer-events: none;
@@ -29,7 +29,7 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    #status { top: 10px; font: 14px system-ui, sans-serif; background:#1565c0; }
+    #status { top: 10px; background:#2e7d32; }
     #hud { bottom: 10px; }
     #hud b { color:#8bc34a; }
   </style>
@@ -43,24 +43,30 @@
   <script>
   /* ================= CONFIG ================= */
 
+  // Dynmap folder structure:
+  // {BASE}/tiles/{WORLD}/{VIEW}/{bx_by}/{tile}.jpg
   const WORLD = "world";
-  const VIEW  = "ne"; // dynmap prefix folder under tiles/world/
+  const VIEW  = "ne"; // dynmap prefix
+
+  // Your Cloudflare R2 public base (must end with /)
   const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-  // Dynmap rules for your install (from your filenames)
-  const BASE_BLOCKS_PER_TILE = 32;   // zoomOut 0 tile = 32x32 blocks
-  const TILES_PER_DIR        = 32;   // bucket folders are 32x32 tiles
+  // Confirmed by your overlay
+  const EXT = "jpg";
+  const TILE_PX = 128;
 
-  // Leaflet zoom config:
-  // zoomOut N == leaflet zoom -N
-  const MIN_ZOOM   = -6;  // zoomOut 6
-  const MAX_ZOOM   =  2;  // zoom-in a bit (still uses zoomOut 0 tiles)
+  // Dynmap tile math for YOUR renderer
+  // (your files indicate 32x32 blocks per base tile)
+  const BLOCKS_PER_TILE = 32;
+
+  // Dynmap bucket folders are 32 tiles per dir (matches your paths like 1_-4, -11_-5, etc.)
+  const TILES_PER_DIR = 32;
+
+  // Leaflet zoom config
+  // We want to START zoomed all the way out (6 zoomouts = -6)
+  const MIN_ZOOM   = -6;  // uses z_, zz_, ...
+  const MAX_ZOOM   =  2;  // zoom-in (Leaflet scales z0 tiles)
   const START_ZOOM = -6;
-
-  // OPTIONAL: where to start the camera in block coords
-  // (set this to your "center of interest" — NOT a hard bound)
-  const START_BLOCK_X = 0;
-  const START_BLOCK_Z = 0;
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
@@ -69,178 +75,130 @@
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
   const BASE = withSlash(BASE_URL);
 
-  // floor division that behaves for negatives (critical for dynmap buckets)
   function floorDiv(n, d){
-    if(n >= 0) return Math.floor(n/d);
-    const q = Math.trunc(n/d);
-    return (q*d === n) ? q : (q - 1);
+    if (n >= 0) return Math.floor(n / d);
+    const q = Math.trunc(n / d);
+    return (q * d === n) ? q : (q - 1);
   }
 
-  function zoomOutFromLeafletZ(z){
-    return z < 0 ? -z : 0; // zoom in uses base tiles
+  // bucket folder for tile index at that zoom level
+  const bucket = (t) => floorDiv(t, TILES_PER_DIR);
+
+  // Dynmap zoom-out filename prefixes:
+  // zoomOut 0 => "" (base tiles)
+  // zoomOut 1 => "z_"
+  // zoomOut 2 => "zz_"
+  // ...
+  function zoomPrefix(zoomOut){
+    if (zoomOut <= 0) return "";
+    return "z".repeat(zoomOut) + "_";
   }
 
-  function prefixForZoomOut(zoomOut){
-    return zoomOut <= 0 ? "" : ("z".repeat(zoomOut) + "_");
+  // Build dynmap tile URL for given (tx,ty) at zoomOut level
+  function dynTileUrl(tx, ty, zoomOut){
+    const bx = bucket(tx);
+    const by = bucket(ty);
+    const pref = zoomPrefix(zoomOut);
+    return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.${EXT}`;
   }
 
-  function bucketForTile(t){
-    return floorDiv(t, TILES_PER_DIR);
-  }
+  /* ================= MAP SETUP ================= */
 
-  // probe one tile to detect ext + pixel size
-  function probe(url, timeoutMs=6000){
-    return new Promise((resolve)=>{
-      const img = new Image();
-      const t = setTimeout(()=>{ img.src=""; resolve(false); }, timeoutMs);
-      img.onload  = ()=>{ clearTimeout(t); resolve(true); };
-      img.onerror = ()=>{ clearTimeout(t); resolve(false); };
-      img.src = url + "?p=" + Date.now();
-    });
-  }
+  // IMPORTANT: anchor world origin at (0,0) in *block space*
+  // We'll represent map coordinates in "z0 pixels", where:
+  //   1 block = TILE_PX / BLOCKS_PER_TILE pixels (at zoom 0)
+  const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
-  async function detectTileFormat(){
-    const statusEl = document.getElementById("status");
-    const status = (m, color="#1565c0") => { statusEl.textContent = m; statusEl.style.background = color; };
+  // Our CRS coordinate system:
+  //   lng = xBlocks * pxPerBlock
+  //   lat = zBlocks * pxPerBlock
+  // That makes (0,0) exactly your dynmap origin anchor.
+  const map = L.map("map", {
+    crs: L.CRS.Simple,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
+    zoomSnap: 1,
+    updateWhenZooming: false,
+    zoomControl: true
+  });
 
-    // pick a commonly-existing tile near origin at zoomOut0
-    const testTx = 0, testTy = 0;
-    const bx = bucketForTile(testTx), by = bucketForTile(testTy);
-    const basePath = `tiles/${WORLD}/${VIEW}/${bx}_${by}/${testTx}_${testTy}`;
+  // Tile layer that uses dynmap zoom-out tiles for z<=0.
+  const DynmapLayer = L.TileLayer.extend({
+    getTileUrl: function (coords) {
+      // NOTE: Leaflet will call this with coords.z = tileZoom,
+      // and because we set maxNativeZoom=0, for map zoom > 0
+      // it will still request coords.z = 0 (scaled tiles).
+      const tileZoom = coords.z;
 
-    for (const ext of ["jpg","png","jpeg"]) {
-      const url = BASE + basePath + "." + ext;
-      status(`probing:\n${url}`);
+      // Dynmap "zoomOut" level:
+      // z = 0 => zoomOut 0 (base)
+      // z = -1 => zoomOut 1 (z_)
+      // z = -2 => zoomOut 2 (zz_)
+      const zoomOut = Math.max(0, -tileZoom);
 
-      // eslint-disable-next-line no-await-in-loop
-      if (await probe(url)) {
-        const TILE_PX = await new Promise((resolve)=>{
-          const img = new Image();
-          img.onload = ()=> resolve(img.naturalWidth || 128);
-          img.onerror = ()=> resolve(128);
-          img.src = url + "&s=" + Date.now();
-        });
+      // With our origin anchored at 0,0 in block space,
+      // Leaflet tile coords map directly to dynmap tile indices for that zoom.
+      const tx = coords.x;
+      const ty = coords.y;
 
-        status(`OK\nworld:${WORLD}\nview:${VIEW}\next:.${ext}\ntile:${TILE_PX}px`, "#2e7d32");
-        return { EXT: ext, TILE_PX };
-      }
+      return dynTileUrl(tx, ty, zoomOut);
     }
+  });
 
-    status(
-      `FAILED\nNo tiles found at origin.\nIf your map isn't near (0,0), change START_BLOCK_X/Z and/or probe coords in code.`,
-      "#b71c1c"
-    );
-    throw new Error("No tiles found");
+  // Add layer.
+  // Key: maxNativeZoom=0 makes zoom-in (z>0) scale z0 tiles instead of requesting non-existent tiles.
+  const layer = new DynmapLayer("", {
+    tileSize: TILE_PX,
+    noWrap: true,
+    keepBuffer: 12,
+    updateWhenZooming: false,
+    updateWhenIdle: true,
+    errorTileUrl: BLANK,
+    maxNativeZoom: 0
+  }).addTo(map);
+
+  // Start centered near origin; you can change this.
+  // Center at world origin (0,0) => CRS point (0,0)
+  map.setView([0, 0], START_ZOOM);
+
+  // UI status
+  document.getElementById("status").textContent =
+    `OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\norigin anchored at (0,0)`;
+
+  /* ================= HUD ================= */
+
+  const hud = document.getElementById("hud");
+
+  function updateHUD(latlng){
+    const zLeaf = map.getZoom();
+    const zoomOut = Math.max(0, -zLeaf);
+
+    // Convert CRS pixels back to blocks
+    const xBlocks = latlng.lng / pxPerBlock;
+    const zBlocks = latlng.lat / pxPerBlock;
+
+    hud.innerHTML =
+      `X:<b>${xBlocks.toFixed(1)}</b> Z:<b>${zBlocks.toFixed(1)}</b>` +
+      ` | leaflet z=<b>${zLeaf}</b> | zoomOut:<b>${zoomOut}</b>`;
   }
 
-  (async () => {
-    const { EXT, TILE_PX } = await detectTileFormat();
+  map.on("mousemove", e => updateHUD(e.latlng));
+  map.on("click", e => {
+    updateHUD(e.latlng);
+    const x = Math.floor(e.latlng.lng / pxPerBlock);
+    const z = Math.floor(e.latlng.lat / pxPerBlock);
+    navigator.clipboard?.writeText(`${x} ${z}`);
+  });
 
-    // conversion between pixels (zoom 0) and blocks
-    const pxPerBlock = TILE_PX / BASE_BLOCKS_PER_TILE;
-
-    const map = L.map("map", {
-      crs: L.CRS.Simple,
-      minZoom: MIN_ZOOM,
-      maxZoom: MAX_ZOOM,
-      zoomSnap: 1,
-      zoomControl: true
-    });
-
-    /**
-     * We use a GridLayer so we can compute Dynmap tile coords ourselves.
-     * NO coordinate limiting: we always return a URL, and missing tiles fall back to BLANK.
-     */
-    const DynmapGrid = L.GridLayer.extend({
-      createTile: function(coords, done){
-        const tile = document.createElement("img");
-        tile.alt = "";
-        tile.setAttribute("role", "presentation");
-        tile.style.width = tile.style.height = TILE_PX + "px";
-
-        // pick dynmap zoomOut from leaflet zoom
-        const leafletZ = coords.z;
-        const zoomOut = zoomOutFromLeafletZ(leafletZ);
-        const blocksPerTile = BASE_BLOCKS_PER_TILE * (1 << zoomOut);
-        const pfx = prefixForZoomOut(zoomOut);
-
-        /**
-         * Convert this Leaflet tile (coords.x, coords.y at coords.z)
-         * into *zoom0 pixel space*, then into blocks, then dynmap tile indices.
-         *
-         * CRS.Simple:
-         *  - x increases right
-         *  - y increases down
-         * We treat y as Minecraft Z.
-         */
-        const scaleToZ0 = Math.pow(2, -leafletZ); // z=-6 => 64x bigger in z0 pixels
-
-        const px0_x = coords.x * TILE_PX * scaleToZ0;
-        const px0_y = coords.y * TILE_PX * scaleToZ0;
-
-        const blockX = px0_x / pxPerBlock;
-        const blockZ = px0_y / pxPerBlock;
-
-        const tx = floorDiv(blockX, blocksPerTile);
-        const ty = floorDiv(blockZ, blocksPerTile);
-
-        const bx = bucketForTile(tx);
-        const by = bucketForTile(ty);
-
-        const url =
-          `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pfx}${tx}_${ty}.${EXT}`;
-
-        tile.onload = () => done(null, tile);
-        tile.onerror = () => {
-          // missing/404 tiles -> show blank
-          tile.src = BLANK;
-          done(null, tile);
-        };
-
-        // cache-bust while testing
-        tile.src = url + `?v=${Date.now()}`;
-
-        return tile;
-      }
-    });
-
-    DynmapGrid.prototype.getAttribution = () => "";
-    const layer = new DynmapGrid({ tileSize: TILE_PX }).addTo(map);
-
-    // start view at your chosen block coord, but allow panning infinitely
-    const startPxX = START_BLOCK_X * pxPerBlock;
-    const startPxY = START_BLOCK_Z * pxPerBlock;
-    map.setView([startPxY, startPxX], START_ZOOM);
-
-    // HUD
-    const hud = document.getElementById("hud");
-    function updateHUD(latlng){
-      const z = map.getZoom();
-      const zoomOut = zoomOutFromLeafletZ(z);
-
-      // convert latlng->px0->blocks
-      const p = map.project(latlng, z);
-      const px0x = p.x * Math.pow(2, -z);
-      const px0y = p.y * Math.pow(2, -z);
-
-      const X = px0x / pxPerBlock;
-      const Z = px0y / pxPerBlock;
-
-      hud.innerHTML =
-        `X:<b>${X.toFixed(1)}</b> Z:<b>${Z.toFixed(1)}</b>` +
-        ` | leaflet z=${z}` +
-        ` | zoomOut:<b>${zoomOut}</b>`;
-
-      return { X, Z };
-    }
-
-    map.on("mousemove", e => updateHUD(e.latlng));
-    map.on("click", e => {
-      const { X, Z } = updateHUD(e.latlng);
-      navigator.clipboard?.writeText(`${Math.floor(X)} ${Math.floor(Z)}`);
-    });
-
-    console.log("Viewer ready", { WORLD, VIEW, EXT, TILE_PX });
+  /* ================= QUICK SELF-TEST =================
+     Optional: verify we can load the base origin tile (0,0) at zoomOut 0.
+  */
+  (function probeOrigin(){
+    const url = dynTileUrl(0, 0, 0) + `?t=${Date.now()}`;
+    const img = new Image();
+    img.onload = () => console.log("Probe OK:", url);
+    img.onerror = () => console.warn("Probe failed (origin tile may not exist yet):", url);
+    img.src = url;
   })();
   </script>
 </body>
