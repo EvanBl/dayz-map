@@ -46,79 +46,81 @@
   // Dynmap folder structure:
   // {BASE}/tiles/{WORLD}/{VIEW}/{bx_by}/{tile}.jpg
   const WORLD = "world";
-  const VIEW  = "ne"; // dynmap prefix
-
-  // Your Cloudflare R2 public base (must end with /)
+  const VIEW  = "ne";  // dynmap prefix
   const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
   // Confirmed by your overlay
   const EXT = "jpg";
   const TILE_PX = 128;
 
-  // Dynmap tile math for YOUR renderer
-  // (your files indicate 32x32 blocks per base tile)
+  // Your renderer: base tile represents 32x32 blocks
   const BLOCKS_PER_TILE = 32;
 
-  // Dynmap bucket folders are 32 tiles per dir (matches your paths like 1_-4, -11_-5, etc.)
+  // Bucket dirs are 32 tiles wide: e.g. -11_-5 contains tx [-352..-321]
   const TILES_PER_DIR = 32;
 
   // Leaflet zoom config
-  // We want to START zoomed all the way out (6 zoomouts = -6)
-  const MIN_ZOOM   = -6;  // uses z_, zz_, ...
-  const MAX_ZOOM   =  2;  // zoom-in (Leaflet scales z0 tiles)
+  // Dynmap zoom-outs exist up to 6 => allow Leaflet -6..2
+  const MIN_ZOOM   = -6;
+  const MAX_ZOOM   =  2;
   const START_ZOOM = -6;
 
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
-
-  /* ================= TILE AXIS FIX (MISALIGNMENT) =================
-     Your stitching indicates Leaflet's (x,y) isn't matching Dynmap's (tx,ty)
-     for this isometric view. These toggles fix transpose/mirroring.
-
-     Start here (most likely for your screenshot):
-  */
-  const SWAP_AXES = true;   // transpose
-  const FLIP_X    = false;  // mirror horizontally
-  const FLIP_Y    = true;   // mirror vertically
 
   /* ================= HELPERS ================= */
 
   function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
   const BASE = withSlash(BASE_URL);
 
+  // Correct floor division for negatives
   function floorDiv(n, d){
     if (n >= 0) return Math.floor(n / d);
     const q = Math.trunc(n / d);
     return (q * d === n) ? q : (q - 1);
   }
 
-  // bucket folder for tile index at that zoom level
+  // bucket folder index in "base tile units" (NOT zoomed units)
   const bucket = (t) => floorDiv(t, TILES_PER_DIR);
 
   // Dynmap zoom-out filename prefixes:
-  // zoomOut 0 => "" (base tiles)
-  // zoomOut 1 => "z_"
-  // zoomOut 2 => "zz_"
+  // zoomOut 0 => ""         =>  tx_ty.jpg
+  // zoomOut 1 => "z_"       =>  z_tx_ty.jpg
+  // zoomOut 2 => "zz_"      =>  zz_tx_ty.jpg
   // ...
   function zoomPrefix(zoomOut){
-    if (zoomOut <= 0) return "";
-    return "z".repeat(zoomOut) + "_";
+    return zoomOut <= 0 ? "" : ("z".repeat(zoomOut) + "_");
   }
 
-  // Convert Leaflet tile coords -> Dynmap tx/ty
-  function leafletToDynmapTile(cx, cy) {
-    let a = cx;
-    let b = cy;
+  /**
+   * THE KEY FIX:
+   * Dynmap zoom-out tiles are stored on a grid where tx/ty are multiples of 2^zoomOut.
+   * Example you showed:
+   *   zoomOut 5 => zzzzz_-384_-448.jpg  (-384 and -448 are multiples of 32 = 2^5)
+   *
+   * Leaflet's coords.x/coords.y at zoom z=-zoomOut correspond to "zoomed grid tiles".
+   * To address Dynmap files, we must convert:
+   *   dynTx = coords.x * 2^zoomOut
+   *   dynTy = coords.y * 2^zoomOut
+   *
+   * (This keeps (0,0) anchored correctly across all zoomOut levels.)
+   */
+  function dynTileCoords(coords){
+    const tileZ = coords.z;
 
-    if (SWAP_AXES) [a, b] = [b, a];
+    // For zoom-in (z>0), we don't have dynmap zoom-in pyramids.
+    // We'll clamp native requests to z=0 later via maxNativeZoom:0.
+    // So here, treat >0 as 0.
+    const effZ = Math.min(tileZ, 0);
 
-    // Important: the -1 aligns boundaries (0..127, 128..255...)
-    if (FLIP_Y) b = -b - 1;
-    if (FLIP_X) a = -a - 1;
+    const zoomOut = Math.max(0, -effZ);
+    const mul = 1 << zoomOut; // 2^zoomOut
 
-    return { tx: a, ty: b };
+    const tx = coords.x * mul;
+    const ty = coords.y * mul;
+
+    return { tx, ty, zoomOut };
   }
 
-  // Build dynmap tile URL for given (tx,ty) at zoomOut level
   function dynTileUrl(tx, ty, zoomOut){
     const bx = bucket(tx);
     const by = bucket(ty);
@@ -128,8 +130,7 @@
 
   /* ================= MAP SETUP ================= */
 
-  // Anchor world origin at (0,0) in *block space*
-  // CRS units are z0 pixels:
+  // CRS units = z0 pixels. Convert CRS pixels -> blocks:
   const pxPerBlock = TILE_PX / BLOCKS_PER_TILE;
 
   const map = L.map("map", {
@@ -141,37 +142,31 @@
     zoomControl: true
   });
 
-  // Tile layer:
-  // - For zoom <= 0: request actual dynmap zoom-out tiles (z_, zz_, ...)
-  // - For zoom > 0: Leaflet will scale native tiles (maxNativeZoom=0)
   const DynmapLayer = L.TileLayer.extend({
-    getTileUrl: function (coords) {
-      const tileZoom = coords.z;
-      const zoomOut = Math.max(0, -tileZoom);
-
-      // Leaflet tile coords -> Dynmap tile coords
-      const { tx, ty } = leafletToDynmapTile(coords.x, coords.y);
-
+    getTileUrl: function(coords){
+      const { tx, ty, zoomOut } = dynTileCoords(coords);
       return dynTileUrl(tx, ty, zoomOut);
     }
   });
 
+  // NOTE:
+  // maxNativeZoom:0 => for Leaflet zoom > 0, it keeps requesting z0 tiles and scales them.
+  // That is correct because Dynmap doesn't generate zoom-in tile pyramids.
   new DynmapLayer("", {
     tileSize: TILE_PX,
-    noWrap: false,           // don't clamp; let it request whatever exists
-    keepBuffer: 12,
+    maxNativeZoom: 0,
+    noWrap: false,           // don't clamp; let it request negative tiles too
+    keepBuffer: 16,
     updateWhenZooming: false,
     updateWhenIdle: true,
-    errorTileUrl: BLANK,
-    maxNativeZoom: 0
+    errorTileUrl: BLANK
   }).addTo(map);
 
-  // Start at max zoom-out (-6) centered at origin
+  // Start zoomed all the way out at origin (0,0)
   map.setView([0, 0], START_ZOOM);
 
-  // UI status
   document.getElementById("status").textContent =
-    `OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\norigin anchored at (0,0)\nSWAP=${SWAP_AXES} FLIP_X=${FLIP_X} FLIP_Y=${FLIP_Y}`;
+    `OK\nworld:${WORLD}\nview:${VIEW}\next:${EXT}\ntile:${TILE_PX}px\norigin anchored at (0,0)\nzoomOut tiles enabled`;
 
   /* ================= HUD ================= */
 
@@ -181,7 +176,6 @@
     const zLeaf = map.getZoom();
     const zoomOut = Math.max(0, -zLeaf);
 
-    // Convert CRS pixels back to blocks
     const xBlocks = latlng.lng / pxPerBlock;
     const zBlocks = latlng.lat / pxPerBlock;
 
@@ -198,18 +192,17 @@
     navigator.clipboard?.writeText(`${x} ${z}`);
   });
 
-  /* ================= QUICK SELF-TEST =================
-     Probe a couple likely tiles at zoomOut 0 and zoomOut 1
-  */
+  /* ================= OPTIONAL PROBE ================= */
   (function probe(){
-    const urls = [
-      dynTileUrl(0, 0, 0),
-      dynTileUrl(0, 0, 1),
-      dynTileUrl(1, 0, 0),
-      dynTileUrl(0, 1, 0),
-    ].map(u => u + `?t=${Date.now()}`);
-
-    urls.forEach((url) => {
+    // probe a couple tiles at different zoomOut levels near origin
+    const samples = [
+      { zoomOut: 0, tx: 0, ty: 0 },
+      { zoomOut: 1, tx: 0, ty: 0 },
+      { zoomOut: 2, tx: 0, ty: 0 },
+      { zoomOut: 3, tx: 0, ty: 0 },
+    ];
+    samples.forEach(s => {
+      const url = dynTileUrl(s.tx, s.ty, s.zoomOut) + `?t=${Date.now()}`;
       const img = new Image();
       img.onload = () => console.log("Probe OK:", url);
       img.onerror = () => console.warn("Probe failed:", url);
