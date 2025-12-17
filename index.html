@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>DayZ World Map</title>
+  <title>DayZ World Map (Dynmap tiles)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -14,121 +14,137 @@
     html, body, #map { height:100%; margin:0; padding:0; }
     .leaflet-container { background:#0b0f14; }
 
-    #status {
+    #status, #hud {
       position: fixed;
       left: 10px;
-      top: 10px;
       z-index: 9999;
-      padding: 6px 10px;
-      border-radius: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
       color: #fff;
       font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      background: rgba(0,0,0,.6);
-      white-space: pre;
+      pointer-events: none;
+      background: rgba(0,0,0,.65);
+      max-width: 85vw;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
+    #status { top: 10px; background:#2e7d32; }
+    #hud { bottom: 10px; }
+    #hud b { color:#8bc34a; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="status">booting…</div>
+  <div id="hud">loading…</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-  /* ====== CONFIG ====== */
-  const WORLD = "world";
-  const VIEW  = "ne";
-  const BASE  = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/"; // must end with /
-  const EXT   = "jpg";
-  const TILE_PX = 128;
+    /* ========= CONFIG ========= */
+    const WORLD = "world";
+    const VIEW  = "ne";
 
-  const BLOCKS_PER_TILE = 32;
-  const TILES_PER_DIR   = 32;
+    // MUST end with /
+    const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-  // your visibilitylimits (blocks)
-  const X_MIN = -2640, X_MAX = 2720;
-  const Z_MIN = -2720, Z_MAX = 5536;
+    // Dynmap tiles are bucketed in 32x32 directories: bx_by/
+    const TILES_PER_DIR = 32;
 
-  // use ONLY non-negative Leaflet zoom
-  const LEAFLET_MIN_Z = 0;  // zoomOut=6
-  const LEAFLET_MAX_Z = 6;  // zoomOut=0
-  const START_Z       = 0;  // start fully zoomed-out (zoomOut=6)
+    // Dynmap tile pixel size (almost always 128)
+    const TILE_PX = 128;
 
-  const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+    // Dynmap provides zoom-out tiles as: z_, zz_, zzz_, ...
+    // We'll use Leaflet zooms: 0 (native), -1..-6 (zoomOut 1..6)
+    const MIN_ZOOM = -6;
+    const MAX_ZOOM = 0;
+    const START_ZOOM = -1; // start slightly zoomed out so you immediately test zoomOut
 
-  function floorDiv(n, d){
-    if (n >= 0) return Math.floor(n / d);
-    const q = Math.trunc(n / d);
-    return (q * d === n) ? q : (q - 1);
-  }
-  const tileX0 = (x) => floorDiv(x, BLOCKS_PER_TILE);
-  const tileY0 = (z) => floorDiv(z, BLOCKS_PER_TILE);
-  const bucket = (t) => floorDiv(t, TILES_PER_DIR);
+    const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
-  function zoomPrefix(zoomOut){
-    return zoomOut <= 0 ? "" : ("z".repeat(zoomOut) + "_");
-  }
+    /* ========= HELPERS ========= */
+    function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
+    const BASE = withSlash(BASE_URL);
 
-  function dynUrl(tx, ty, zoomOut){
-    const bx = bucket(tx), by = bucket(ty);
-    const pref = zoomPrefix(zoomOut);
-    return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.${EXT}`;
-  }
-
-  // z0 tile bounds
-  const MIN_TX0 = tileX0(X_MIN);
-  const MAX_TX0 = tileX0(X_MAX - 1);
-  const MIN_TY0 = tileY0(Z_MIN);
-  const MAX_TY0 = tileY0(Z_MAX - 1);
-
-  const W0 = (MAX_TX0 - MIN_TX0 + 1);
-  const H0 = (MAX_TY0 - MIN_TY0 + 1);
-
-  // CRS.Simple: [lat, lng] ~ [y, x], origin top-left
-  const bounds = L.latLngBounds([0,0], [H0 * TILE_PX, W0 * TILE_PX]);
-
-  const map = L.map("map", {
-    crs: L.CRS.Simple,
-    minZoom: LEAFLET_MIN_Z,
-    maxZoom: LEAFLET_MAX_Z,
-    zoomSnap: 1,
-    zoomControl: true
-  });
-
-  const DynLayer = L.TileLayer.extend({
-    getTileUrl: function(coords){
-      // coords.z is 0..6 (non-negative)
-      const zoomOut = LEAFLET_MAX_Z - coords.z; // 6..0
-
-      const scale = 1 << zoomOut; // 64..1
-
-      const MIN_TX = floorDiv(MIN_TX0, scale);
-      const MAX_TX = floorDiv(MAX_TX0, scale);
-      const MIN_TY = floorDiv(MIN_TY0, scale);
-      const MAX_TY = floorDiv(MAX_TY0, scale);
-
-      const tx = MIN_TX + coords.x;
-      const ty = MIN_TY + coords.y;
-
-      if (tx < MIN_TX || tx > MAX_TX || ty < MIN_TY || ty > MAX_TY) return BLANK;
-
-      return dynUrl(tx, ty, zoomOut) + `?t=${Date.now()}`;
+    function floorDiv(n, d){
+      // true floor division for negatives
+      if (n >= 0) return Math.floor(n / d);
+      const q = Math.trunc(n / d);
+      return (q * d === n) ? q : (q - 1);
     }
-  });
 
-  new DynLayer("", {
-    tileSize: TILE_PX,
-    noWrap: true,
-    keepBuffer: 8,
-    updateWhenIdle: true,
-    errorTileUrl: BLANK
-  }).addTo(map);
+    function bucket(t){ return floorDiv(t, TILES_PER_DIR); }
 
-  map.fitBounds(bounds);
-  map.setZoom(START_Z);
+    function zoomPrefix(zoomOut){
+      if (zoomOut <= 0) return "";
+      return "z".repeat(zoomOut) + "_";
+    }
 
-  document.getElementById("status").textContent =
-    `OK\nleaflet z: ${LEAFLET_MIN_Z}..${LEAFLET_MAX_Z}\nzoomOut: 6..0\n${BASE}tiles/${WORLD}/${VIEW}/...`;
+    function dynUrl(tx, ty, zoomOut){
+      const bx = bucket(tx);
+      const by = bucket(ty);
+      const pref = zoomPrefix(zoomOut);
+      // NOTE: this exactly matches your R2 structure: tiles/world/ne/bx_by/[z.._]x_y.jpg
+      return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.jpg`;
+    }
 
+    /* ========= LEAFLET ========= */
+    const map = L.map("map", {
+      crs: L.CRS.Simple,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      zoomSnap: 1,
+      zoomControl: true
+    });
+
+    const DynmapLayer = L.TileLayer.extend({
+      getTileUrl: function(coords) {
+        // Leaflet zoom 0 = native dynmap tiles (no prefix)
+        // Leaflet zoom -N = dynmap zoomOut N (z_, zz_, ...)
+        const zoomOut = Math.max(0, -coords.z);
+
+        // IMPORTANT:
+        // Treat Leaflet tile coords as Dynmap tile coords.
+        // Let Leaflet’s TMS option handle the Y inversion.
+        const tx = coords.x;
+        const ty = coords.y;
+
+        return dynUrl(tx, ty, zoomOut);
+      }
+    });
+
+    const layer = new DynmapLayer("", {
+      tileSize: TILE_PX,
+      // This is the big fix for “bands / shuffled strips” on iso maps:
+      // Dynmap’s tile Y direction is opposite Leaflet default.
+      tms: true,
+
+      noWrap: true,
+      keepBuffer: 8,
+      updateWhenIdle: true,
+      errorTileUrl: BLANK,
+
+      // zooming in above 0 should just scale native tiles (Dynmap doesn’t have + zoom levels)
+      maxNativeZoom: 0
+    }).addTo(map);
+
+    // Start at (0,0) tile-space. You can pan to wherever your content is.
+    map.setView([0, 0], START_ZOOM);
+
+    document.getElementById("status").textContent =
+      `OK\nworld:${WORLD}\nview:${VIEW}\nTILE:${TILE_PX}px\nLeaflet z: ${START_ZOOM}\nDynmap zoomOut: ${Math.max(0, -START_ZOOM)}\n(tms:true)`;
+
+    const hud = document.getElementById("hud");
+    function updateHUD(){
+      const z = map.getZoom();
+      const zoomOut = Math.max(0, -z);
+      const center = map.getCenter();
+      hud.innerHTML =
+        `leaflet z=<b>${z}</b> | zoomOut=<b>${zoomOut}</b>\n` +
+        `center lat=<b>${center.lat.toFixed(2)}</b> lng=<b>${center.lng.toFixed(2)}</b>\n` +
+        `tile sample URL:\n${dynUrl(0,0,zoomOut)}`;
+    }
+    map.on("move zoom", updateHUD);
+    updateHUD();
   </script>
 </body>
 </html>
