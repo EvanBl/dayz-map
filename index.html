@@ -43,17 +43,16 @@
     /* ========= CONFIG ========= */
     const WORLD = "world";
     const VIEW  = "ne";
+    const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/"; // MUST end with /
 
-    // MUST end with /
-    const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
-
+    const EXT = "jpg";
     const TILE_PX = 128;
     const TILES_PER_DIR = 32;
 
-    // Dynmap zoomOut levels you have on disk: 0..6
-    // We map Leaflet zoom 6..0 -> Dynmap zoomOut 0..6 (reversed)
-    const LEAFLET_MAX_Z = 6;   // most detailed (Dynmap zoomOut 0)
-    const LEAFLET_MIN_Z = 0;   // most zoomed out (Dynmap zoomOut 6)
+    // Leaflet zoom 6 = Dynmap zoomOut 0 (most detailed)
+    // Leaflet zoom 0 = Dynmap zoomOut 6 (most zoomed out)
+    const LEAFLET_MAX_Z = 6;
+    const LEAFLET_MIN_Z = 0;
     const START_Z = 6;
 
     const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
@@ -67,7 +66,6 @@
       const q = Math.trunc(n / d);
       return (q * d === n) ? q : (q - 1);
     }
-
     function bucket(t){ return floorDiv(t, TILES_PER_DIR); }
 
     function zoomPrefix(zoomOut){
@@ -79,7 +77,7 @@
       const bx = bucket(tx);
       const by = bucket(ty);
       const pref = zoomPrefix(zoomOut);
-      return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.jpg`;
+      return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.${EXT}`;
     }
 
     /* ========= LEAFLET ========= */
@@ -93,14 +91,16 @@
 
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function(coords) {
-        // Reverse zoom mapping: Leaflet z=6 -> zoomOut 0, z=5 -> zoomOut 1, ...
+        // Leaflet z=6 -> zoomOut 0, z=5 -> zoomOut 1, ..., z=0 -> zoomOut 6
         const zoomOut = (LEAFLET_MAX_Z - coords.z);
 
-        // THIS is the key “band shuffle” fix:
-        // Dynmap’s HDMap tile math flips the Y sign before building the filename.
-        // So the correct mapping is ty = -coords.y (NOT +coords.y).
-        const tx = coords.x;
-        const ty = -coords.y;
+        // KEY FIX:
+        // Dynmap zoomOut tiles exist only on a grid step of 2^zoomOut.
+        // So we must scale coords by that step (otherwise you request tons of non-existent tiles).
+        const step = 1 << zoomOut;
+
+        const tx = coords.x * step;
+        const ty = -(coords.y * step); // Dynmap flips Y in filename space
 
         return dynUrl(tx, ty, zoomOut) + `?v=${Date.now()}`;
       }
@@ -118,17 +118,27 @@
 
     const status = document.getElementById("status");
     status.textContent =
-      `OK\nworld:${WORLD}\nview:${VIEW}\nTILE:${TILE_PX}px\nLeaflet z:${START_Z}\nDynmap zoomOut:${LEAFLET_MAX_Z-START_Z}\nY mapping: ty = -y`;
+      `OK\nworld:${WORLD}\nview:${VIEW}\nEXT:${EXT}\nTILE:${TILE_PX}px\nLeaflet z:${START_Z} (zoomOut 0)`;
 
     const hud = document.getElementById("hud");
     function updateHUD(){
       const z = map.getZoom();
       const zoomOut = LEAFLET_MAX_Z - z;
+      const step = 1 << zoomOut;
+
       const c = map.getCenter();
+      // Show *which dynmap tile* the center is sampling at this zoom level
+      const cx = Math.floor(c.lng / TILE_PX);
+      const cy = Math.floor(c.lat / TILE_PX);
+
+      const tx = cx * step;
+      const ty = -(cy * step);
+
       hud.innerHTML =
-        `leaflet z=<b>${z}</b> | zoomOut=<b>${zoomOut}</b>\n` +
+        `leaflet z=<b>${z}</b> | dynmap zoomOut=<b>${zoomOut}</b> | step=<b>${step}</b>\n` +
         `center lat=<b>${c.lat.toFixed(2)}</b> lng=<b>${c.lng.toFixed(2)}</b>\n` +
-        `sample: ${dynUrl(0, 0, zoomOut)}`;
+        `dyn tile @center: <b>${tx}_${ty}</b>\n` +
+        `sample:\n${dynUrl(tx, ty, zoomOut)}`;
     }
     map.on("move zoom", updateHUD);
     updateHUD();
