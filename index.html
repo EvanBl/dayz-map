@@ -47,17 +47,14 @@
     // MUST end with /
     const BASE_URL = "https://pub-83eb0b1759804463a95053e4b8319ef5.r2.dev/";
 
-    // Dynmap tiles are bucketed in 32x32 directories: bx_by/
+    const TILE_PX = 128;
     const TILES_PER_DIR = 32;
 
-    // Dynmap tile pixel size (almost always 128)
-    const TILE_PX = 128;
-
-    // Dynmap provides zoom-out tiles as: z_, zz_, zzz_, ...
-    // We'll use Leaflet zooms: 0 (native), -1..-6 (zoomOut 1..6)
-    const MIN_ZOOM = -6;
-    const MAX_ZOOM = 0;
-    const START_ZOOM = -1; // start slightly zoomed out so you immediately test zoomOut
+    // Dynmap zoomOut levels you have on disk: 0..6
+    // We map Leaflet zoom 6..0 -> Dynmap zoomOut 0..6 (reversed)
+    const LEAFLET_MAX_Z = 6;   // most detailed (Dynmap zoomOut 0)
+    const LEAFLET_MIN_Z = 0;   // most zoomed out (Dynmap zoomOut 6)
+    const START_Z = 6;
 
     const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
@@ -66,7 +63,6 @@
     const BASE = withSlash(BASE_URL);
 
     function floorDiv(n, d){
-      // true floor division for negatives
       if (n >= 0) return Math.floor(n / d);
       const q = Math.trunc(n / d);
       return (q * d === n) ? q : (q - 1);
@@ -83,65 +79,56 @@
       const bx = bucket(tx);
       const by = bucket(ty);
       const pref = zoomPrefix(zoomOut);
-      // NOTE: this exactly matches your R2 structure: tiles/world/ne/bx_by/[z.._]x_y.jpg
       return `${BASE}tiles/${WORLD}/${VIEW}/${bx}_${by}/${pref}${tx}_${ty}.jpg`;
     }
 
     /* ========= LEAFLET ========= */
     const map = L.map("map", {
       crs: L.CRS.Simple,
-      minZoom: MIN_ZOOM,
-      maxZoom: MAX_ZOOM,
+      minZoom: LEAFLET_MIN_Z,
+      maxZoom: LEAFLET_MAX_Z,
       zoomSnap: 1,
       zoomControl: true
     });
 
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function(coords) {
-        // Leaflet zoom 0 = native dynmap tiles (no prefix)
-        // Leaflet zoom -N = dynmap zoomOut N (z_, zz_, ...)
-        const zoomOut = Math.max(0, -coords.z);
+        // Reverse zoom mapping: Leaflet z=6 -> zoomOut 0, z=5 -> zoomOut 1, ...
+        const zoomOut = (LEAFLET_MAX_Z - coords.z);
 
-        // IMPORTANT:
-        // Treat Leaflet tile coords as Dynmap tile coords.
-        // Let Leaflet’s TMS option handle the Y inversion.
+        // THIS is the key “band shuffle” fix:
+        // Dynmap’s HDMap tile math flips the Y sign before building the filename.
+        // So the correct mapping is ty = -coords.y (NOT +coords.y).
         const tx = coords.x;
-        const ty = coords.y;
+        const ty = -coords.y;
 
-        return dynUrl(tx, ty, zoomOut);
+        return dynUrl(tx, ty, zoomOut) + `?v=${Date.now()}`;
       }
     });
 
-    const layer = new DynmapLayer("", {
+    new DynmapLayer("", {
       tileSize: TILE_PX,
-      // This is the big fix for “bands / shuffled strips” on iso maps:
-      // Dynmap’s tile Y direction is opposite Leaflet default.
-      tms: true,
-
       noWrap: true,
       keepBuffer: 8,
       updateWhenIdle: true,
-      errorTileUrl: BLANK,
-
-      // zooming in above 0 should just scale native tiles (Dynmap doesn’t have + zoom levels)
-      maxNativeZoom: 0
+      errorTileUrl: BLANK
     }).addTo(map);
 
-    // Start at (0,0) tile-space. You can pan to wherever your content is.
-    map.setView([0, 0], START_ZOOM);
+    map.setView([0, 0], START_Z);
 
-    document.getElementById("status").textContent =
-      `OK\nworld:${WORLD}\nview:${VIEW}\nTILE:${TILE_PX}px\nLeaflet z: ${START_ZOOM}\nDynmap zoomOut: ${Math.max(0, -START_ZOOM)}\n(tms:true)`;
+    const status = document.getElementById("status");
+    status.textContent =
+      `OK\nworld:${WORLD}\nview:${VIEW}\nTILE:${TILE_PX}px\nLeaflet z:${START_Z}\nDynmap zoomOut:${LEAFLET_MAX_Z-START_Z}\nY mapping: ty = -y`;
 
     const hud = document.getElementById("hud");
     function updateHUD(){
       const z = map.getZoom();
-      const zoomOut = Math.max(0, -z);
-      const center = map.getCenter();
+      const zoomOut = LEAFLET_MAX_Z - z;
+      const c = map.getCenter();
       hud.innerHTML =
         `leaflet z=<b>${z}</b> | zoomOut=<b>${zoomOut}</b>\n` +
-        `center lat=<b>${center.lat.toFixed(2)}</b> lng=<b>${center.lng.toFixed(2)}</b>\n` +
-        `tile sample URL:\n${dynUrl(0,0,zoomOut)}`;
+        `center lat=<b>${c.lat.toFixed(2)}</b> lng=<b>${c.lng.toFixed(2)}</b>\n` +
+        `sample: ${dynUrl(0, 0, zoomOut)}`;
     }
     map.on("move zoom", updateHUD);
     updateHUD();
