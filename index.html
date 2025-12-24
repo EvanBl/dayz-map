@@ -10,28 +10,56 @@
   <meta http-equiv="Expires" content="0" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <style>
-    html, body, #map { height:100%; margin:0; padding:0; }
-    .leaflet-container { background:#0b0f14; }
+<style>
+  html, body, #map {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: #000;
+  }
 
-    #status, #hud {
-      position: fixed;
-      left: 10px;
-      z-index: 9999;
-      padding: 8px 10px;
-      border-radius: 10px;
-      color: #fff;
-      font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      pointer-events: none;
-      background: rgba(0,0,0,.65);
-      max-width: 85vw;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    #status { top: 10px; background:#2e7d32; }
-    #hud { bottom: 10px; }
-    #hud b { color:#8bc34a; }
-  </style>
+  /* HARD FORCE BLACK BACKGROUND FOR ALL LEAFLET PANES */
+  .leaflet-container,
+  .leaflet-map-pane,
+  .leaflet-tile-pane,
+  .leaflet-layer,
+  .leaflet-tile-container {
+    background: #000 !important;
+  }
+
+  /* Prevent default gray tile fill */
+  .leaflet-tile {
+    background: transparent !important;
+  }
+
+  #status, #hud {
+    position: fixed;
+    left: 10px;
+    z-index: 9999;
+    padding: 8px 10px;
+    border-radius: 10px;
+    color: #fff;
+    font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    pointer-events: none;
+    background: rgba(0,0,0,.65);
+    max-width: 85vw;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  #status {
+    top: 10px;
+    background: #2e7d32;
+  }
+
+  #hud {
+    bottom: 10px;
+  }
+
+  #hud b {
+    color: #8bc34a;
+  }
+</style>
 </head>
 <body>
   <div id="map"></div>
