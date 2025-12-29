@@ -2,76 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>DayZ World Map (Dynmap tiles)</title>
+  <title>DayZ World Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- Disable caching while iterating -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-<style>
-  html, body, #map {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    background: #000;
-  }
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
 
-  /* HARD FORCE BLACK BACKGROUND FOR ALL LEAFLET PANES */
-  .leaflet-container,
-  .leaflet-map-pane,
-  .leaflet-tile-pane,
-  .leaflet-layer,
-  .leaflet-tile-container {
-    background: #000 !important;
-  }
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #000;
+    }
 
-  /* Prevent default gray tile fill */
-  .leaflet-tile {
-    background: transparent !important;
-  }
+    /* FORCE BLACK BACKGROUND */
+    .leaflet-container,
+    .leaflet-map-pane,
+    .leaflet-tile-pane,
+    .leaflet-layer,
+    .leaflet-tile-container {
+      background: #000 !important;
+    }
 
-  #status, #hud {
-    position: fixed;
-    left: 10px;
-    z-index: 9999;
-    padding: 8px 10px;
-    border-radius: 10px;
-    color: #fff;
-    font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    pointer-events: none;
-    background: rgba(0,0,0,.65);
-    max-width: 85vw;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
+    .leaflet-tile {
+      background: transparent !important;
+    }
 
-  #status {
-    top: 10px;
-    background: #2e7d32;
-  }
+    #status, #hud {
+      position: fixed;
+      left: 10px;
+      z-index: 9999;
+      padding: 8px 10px;
+      border-radius: 10px;
+      color: #fff;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      pointer-events: none;
+      background: rgba(0,0,0,.65);
+      max-width: 85vw;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
 
-  #hud {
-    bottom: 10px;
-  }
+    #status {
+      top: 10px;
+      background: #2e7d32;
+    }
 
-  #hud b {
-    color: #8bc34a;
-  }
-</style>
+    #hud {
+      bottom: 10px;
+    }
+
+    #hud b {
+      color: #8bc34a;
+    }
+  </style>
 </head>
+
 <body>
   <div id="map"></div>
   <div id="status">booting…</div>
   <div id="hud">loading…</div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+
   <script>
     /* ========= CONFIG ========= */
     const WORLD = "world";
     const VIEW  = "sw";
-    const BASE_URL = "https://pub-1df739bf1aa242be83cb2d767f95a596.r2.dev/"; // MUST end with /
+
+    // ✅ YOUR R2 PUBLIC DEV URL — MUST END WITH /
+    const BASE_URL = "https://pub-3b2a61a762fb404e86fe0ac1214db340.r2.dev/";
 
     const EXT = "jpg";
     const TILE_PX = 128;
@@ -83,25 +95,31 @@
     const LEAFLET_MIN_Z = 0;
     const START_Z = 6;
 
+    const VERSION = "2025-12-29-1";
     const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
     /* ========= HELPERS ========= */
-    function withSlash(s){ return s.endsWith("/") ? s : (s + "/"); }
+    function withSlash(s) {
+      return s.endsWith("/") ? s : (s + "/");
+    }
     const BASE = withSlash(BASE_URL);
 
-    function floorDiv(n, d){
+    function floorDiv(n, d) {
       if (n >= 0) return Math.floor(n / d);
       const q = Math.trunc(n / d);
       return (q * d === n) ? q : (q - 1);
     }
-    function bucket(t){ return floorDiv(t, TILES_PER_DIR); }
 
-    function zoomPrefix(zoomOut){
+    function bucket(t) {
+      return floorDiv(t, TILES_PER_DIR);
+    }
+
+    function zoomPrefix(zoomOut) {
       if (zoomOut <= 0) return "";
       return "z".repeat(zoomOut) + "_";
     }
 
-    function dynUrl(tx, ty, zoomOut){
+    function dynUrl(tx, ty, zoomOut) {
       const bx = bucket(tx);
       const by = bucket(ty);
       const pref = zoomPrefix(zoomOut);
@@ -114,23 +132,23 @@
       minZoom: LEAFLET_MIN_Z,
       maxZoom: LEAFLET_MAX_Z,
       zoomSnap: 1,
-      zoomControl: true
+      zoomControl: true,
+      noWrap: true
     });
 
     const DynmapLayer = L.TileLayer.extend({
       getTileUrl: function(coords) {
-        // Leaflet z=6 -> zoomOut 0, z=5 -> zoomOut 1, ..., z=0 -> zoomOut 6
-        const zoomOut = (LEAFLET_MAX_Z - coords.z);
+        // Leaflet z=6 -> zoomOut 0
+        // Leaflet z=0 -> zoomOut 6
+        const zoomOut = LEAFLET_MAX_Z - coords.z;
 
-        // KEY FIX:
-        // Dynmap zoomOut tiles exist only on a grid step of 2^zoomOut.
-        // So we must scale coords by that step (otherwise you request tons of non-existent tiles).
+        // Dynmap tiles only exist on multiples of 2^zoomOut
         const step = 1 << zoomOut;
 
         const tx = coords.x * step;
-        const ty = -(coords.y * step); // Dynmap flips Y in filename space
+        const ty = -(coords.y * step); // Dynmap Y inversion
 
-        return dynUrl(tx, ty, zoomOut) + `?v=${Date.now()}`;
+        return dynUrl(tx, ty, zoomOut) + `?v=${VERSION}`;
       }
     });
 
@@ -144,18 +162,19 @@
 
     map.setView([0, 0], START_Z);
 
+    /* ========= HUD ========= */
     const status = document.getElementById("status");
     status.textContent =
-      `BUILD=NE_TEST_123\nworld:${WORLD}\nview:${VIEW}\nBASE:${BASE_URL}`;
+      `BUILD=DRAFTONEMAP\nworld:${WORLD}\nview:${VIEW}\nBASE:${BASE_URL}`;
 
     const hud = document.getElementById("hud");
-    function updateHUD(){
+
+    function updateHUD() {
       const z = map.getZoom();
       const zoomOut = LEAFLET_MAX_Z - z;
       const step = 1 << zoomOut;
 
       const c = map.getCenter();
-      // Show *which dynmap tile* the center is sampling at this zoom level
       const cx = Math.floor(c.lng / TILE_PX);
       const cy = Math.floor(c.lat / TILE_PX);
 
@@ -168,6 +187,7 @@
         `dyn tile @center: <b>${tx}_${ty}</b>\n` +
         `sample:\n${dynUrl(tx, ty, zoomOut)}`;
     }
+
     map.on("move zoom", updateHUD);
     updateHUD();
   </script>
